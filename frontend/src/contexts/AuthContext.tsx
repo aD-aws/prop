@@ -1,6 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { Amplify } from 'aws-amplify';
-import { signIn, signOut, signUp, getCurrentUser, fetchAuthSession, AuthUser, confirmSignUp } from 'aws-amplify/auth';
+import { Amplify, Auth } from 'aws-amplify';
 import awsConfig from '../aws-config';
 
 // Configure Amplify
@@ -57,47 +56,44 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   // Convert Cognito user to our User interface
-  const convertCognitoUser = async (cognitoUser: AuthUser): Promise<User> => {
+  const convertCognitoUser = async (cognitoUser: any): Promise<User> => {
     try {
-      const session = await fetchAuthSession();
-      const idToken = session.tokens?.idToken;
+      const session = await Auth.currentSession();
+      const idToken = session.getIdToken();
+      const payload = idToken.payload;
       
-      if (idToken) {
-        const payload = idToken.payload;
-        
-        return {
-          id: cognitoUser.userId,
-          email: payload.email as string || '',
-          userType: (payload['custom:user_type'] as string) || 'homeowner',
-          profile: {
-            firstName: payload.given_name as string || '',
-            lastName: payload.family_name as string || '',
-            phone: payload.phone_number as string || '',
-            companyName: payload['custom:company_name'] as string || '',
-          },
-        };
-      }
+      return {
+        id: cognitoUser.username,
+        email: payload.email || cognitoUser.attributes?.email || '',
+        userType: (payload['custom:user_type'] || cognitoUser.attributes?.['custom:user_type']) || 'homeowner',
+        profile: {
+          firstName: payload.given_name || cognitoUser.attributes?.given_name || '',
+          lastName: payload.family_name || cognitoUser.attributes?.family_name || '',
+          phone: payload.phone_number || cognitoUser.attributes?.phone_number || '',
+          companyName: payload['custom:company_name'] || cognitoUser.attributes?.['custom:company_name'] || '',
+        },
+      };
     } catch (error) {
       console.error('Error converting Cognito user:', error);
+      
+      // Fallback user object
+      return {
+        id: cognitoUser.username || 'unknown',
+        email: cognitoUser.attributes?.email || '',
+        userType: 'homeowner',
+        profile: {
+          firstName: cognitoUser.attributes?.given_name || '',
+          lastName: cognitoUser.attributes?.family_name || '',
+          phone: cognitoUser.attributes?.phone_number || '',
+        },
+      };
     }
-    
-    // Fallback user object
-    return {
-      id: cognitoUser.userId,
-      email: cognitoUser.signInDetails?.loginId || '',
-      userType: 'homeowner',
-      profile: {
-        firstName: '',
-        lastName: '',
-        phone: '',
-      },
-    };
   };
 
   useEffect(() => {
     const initializeAuth = async () => {
       try {
-        const cognitoUser = await getCurrentUser();
+        const cognitoUser = await Auth.currentAuthenticatedUser();
         if (cognitoUser) {
           const userData = await convertCognitoUser(cognitoUser);
           setUser(userData);
@@ -116,13 +112,9 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const login = async (email: string, password: string) => {
     try {
       setLoading(true);
-      const { isSignedIn } = await signIn({
-        username: email,
-        password: password,
-      });
-
-      if (isSignedIn) {
-        const cognitoUser = await getCurrentUser();
+      const cognitoUser = await Auth.signIn(email, password);
+      
+      if (cognitoUser) {
         const userData = await convertCognitoUser(cognitoUser);
         setUser(userData);
       }
@@ -130,13 +122,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       console.error('Login error:', error);
       
       // Handle specific Cognito errors
-      if (error.name === 'NotAuthorizedException') {
+      if (error.code === 'NotAuthorizedException') {
         throw new Error('Invalid email or password');
-      } else if (error.name === 'UserNotConfirmedException') {
+      } else if (error.code === 'UserNotConfirmedException') {
         throw new Error('Please verify your email address');
-      } else if (error.name === 'PasswordResetRequiredException') {
+      } else if (error.code === 'PasswordResetRequiredException') {
         throw new Error('Password reset required');
-      } else if (error.name === 'UserNotFoundException') {
+      } else if (error.code === 'UserNotFoundException') {
         throw new Error('User not found');
       } else {
         throw new Error(error.message || 'Login failed');
@@ -148,28 +140,26 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const register = async (userData: RegisterData): Promise<{ needsConfirmation: boolean }> => {
     try {
-      const { isSignUpComplete } = await signUp({
+      const result = await Auth.signUp({
         username: userData.email,
         password: userData.password,
-        options: {
-          userAttributes: {
-            email: userData.email,
-            given_name: userData.firstName,
-            family_name: userData.lastName,
-            phone_number: userData.phone || '',
-            'custom:user_type': userData.userType,
-            'custom:company_name': userData.companyName || '',
-          },
+        attributes: {
+          email: userData.email,
+          given_name: userData.firstName,
+          family_name: userData.lastName,
+          phone_number: userData.phone || '',
+          'custom:user_type': userData.userType,
+          'custom:company_name': userData.companyName || '',
         },
       });
 
-      return { needsConfirmation: !isSignUpComplete };
+      return { needsConfirmation: !result.userConfirmed };
     } catch (error: any) {
       console.error('Registration error:', error);
       
-      if (error.name === 'UsernameExistsException') {
+      if (error.code === 'UsernameExistsException') {
         throw new Error('An account with this email already exists');
-      } else if (error.name === 'InvalidPasswordException') {
+      } else if (error.code === 'InvalidPasswordException') {
         throw new Error('Password does not meet requirements');
       } else {
         throw new Error(error.message || 'Registration failed');
@@ -179,16 +169,13 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const confirmRegistration = async (email: string, code: string) => {
     try {
-      await confirmSignUp({
-        username: email,
-        confirmationCode: code,
-      });
+      await Auth.confirmSignUp(email, code);
     } catch (error: any) {
       console.error('Confirmation error:', error);
       
-      if (error.name === 'CodeMismatchException') {
+      if (error.code === 'CodeMismatchException') {
         throw new Error('Invalid confirmation code');
-      } else if (error.name === 'ExpiredCodeException') {
+      } else if (error.code === 'ExpiredCodeException') {
         throw new Error('Confirmation code has expired');
       } else {
         throw new Error(error.message || 'Confirmation failed');
@@ -198,7 +185,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const logout = async () => {
     try {
-      await signOut();
+      await Auth.signOut();
       setUser(null);
     } catch (error) {
       console.error('Logout error:', error);
