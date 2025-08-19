@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { Amplify, Auth } from 'aws-amplify';
+import Amplify, { Auth } from 'aws-amplify';
 import awsConfig from '../aws-config';
 
 // Configure Amplify
@@ -61,7 +61,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       const session = await Auth.currentSession();
       const idToken = session.getIdToken();
       const payload = idToken.payload;
-      
+
       return {
         id: cognitoUser.username,
         email: payload.email || cognitoUser.attributes?.email || '',
@@ -75,7 +75,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       };
     } catch (error) {
       console.error('Error converting Cognito user:', error);
-      
+
       // Fallback user object
       return {
         id: cognitoUser.username || 'unknown',
@@ -113,14 +113,14 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     try {
       setLoading(true);
       const cognitoUser = await Auth.signIn(email, password);
-      
+
       if (cognitoUser) {
         const userData = await convertCognitoUser(cognitoUser);
         setUser(userData);
       }
     } catch (error: any) {
       console.error('Login error:', error);
-      
+
       // Handle specific Cognito errors
       if (error.code === 'NotAuthorizedException') {
         throw new Error('Invalid email or password');
@@ -156,7 +156,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       return { needsConfirmation: !result.userConfirmed };
     } catch (error: any) {
       console.error('Registration error:', error);
-      
+
       if (error.code === 'UsernameExistsException') {
         throw new Error('An account with this email already exists');
       } else if (error.code === 'InvalidPasswordException') {
@@ -172,7 +172,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       await Auth.confirmSignUp(email, code);
     } catch (error: any) {
       console.error('Confirmation error:', error);
-      
+
       if (error.code === 'CodeMismatchException') {
         throw new Error('Invalid confirmation code');
       } else if (error.code === 'ExpiredCodeException') {

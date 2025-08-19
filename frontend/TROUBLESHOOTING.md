@@ -2,7 +2,30 @@
 
 ## Common Issues and Solutions
 
-### 1. Dependencies Installation Issues
+### 1. "Cannot find module 'aws-amplify'" Error
+
+**Problem**: TypeScript cannot find the aws-amplify module
+
+**Solutions**:
+```bash
+# Option 1: Use the fix script
+./install-frontend-deps.sh
+
+# Option 2: Manual fix
+cd frontend
+rm -rf node_modules package-lock.json
+npm install --legacy-peer-deps
+
+# Option 3: Skip TypeScript checks
+cd frontend
+SKIP_PREFLIGHT_CHECK=true npm start
+
+# Option 4: Use the skip-check script
+cd frontend
+npm run start:skip-check
+```
+
+### 2. Dependencies Installation Issues
 
 **Problem**: `npm install` fails or shows dependency conflicts
 

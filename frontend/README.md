@@ -1,174 +1,64 @@
 # UK Home Improvement Platform - Frontend
 
-A React-based frontend application for the UK Home Improvement Platform, featuring AI-powered guided user experience for home improvement project planning.
+React.js frontend application with AWS Cognito authentication.
 
-## Features
+## Quick Start
 
-- **AI-Powered Guidance**: Real-time AI assistance throughout the user journey
-- **Guided Onboarding**: Step-by-step introduction to the platform
-- **Project Creation Wizard**: Multi-step form with validation and AI guidance
-- **Responsive Design**: Optimized for desktop and mobile devices
-- **Accessibility**: WCAG 2.1 compliant with screen reader support
-- **Material-UI Components**: Consistent, professional design system
-- **Real-time Chat**: AI assistant available on all pages
-- **Progressive Enhancement**: Works without JavaScript for basic functionality
-
-## Technology Stack
-
-- **React 18** with TypeScript
-- **Material-UI (MUI)** for components and theming
-- **React Router** for navigation
-- **React Query** for API state management
-- **React Hook Form** with Yup validation
-- **Axios** for HTTP requests
-- **Socket.io** for real-time features
-- **React Dropzone** for file uploads
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js 16+ and npm
-- Backend API running on port 3001
-
-### Installation
-
+### Option 1: Use Installation Script (Recommended)
 ```bash
-# Install dependencies
-npm install
+# From project root
+./install-frontend-deps.sh
+cd frontend && npm start
+```
 
-# Start development server
+### Option 2: Manual Installation
+```bash
+cd frontend
+npm install --legacy-peer-deps
 npm start
 ```
 
-The application will be available at `http://localhost:3000`.
-
-### Environment Variables
-
-Create a `.env` file in the frontend directory:
-
-```env
-REACT_APP_API_URL=http://localhost:3001/api
-REACT_APP_WEBSOCKET_URL=http://localhost:3001
-```
-
-## Project Structure
-
-```
-src/
-├── components/          # Reusable UI components
-│   ├── AIAssistant/    # AI chat and guidance components
-│   ├── Auth/           # Authentication components
-│   ├── Layout/         # Layout components (Header, Footer)
-│   └── ProjectCreation/ # Project creation wizard steps
-├── contexts/           # React contexts for state management
-├── pages/              # Page components
-├── services/           # API service layer
-├── theme.ts            # Material-UI theme configuration
-└── types/              # TypeScript type definitions
-```
-
-## Key Components
-
-### AI Assistant Chat
-- Floating action button for easy access
-- Real-time chat interface with AI
-- Context-aware responses
-- Quick action buttons for common questions
-
-### Project Creation Wizard
-- Multi-step form with progress tracking
-- Real-time validation and AI guidance
-- Address validation with council data lookup
-- Document upload with drag-and-drop
-- Project type selection with educational content
-
-### Responsive Layout
-- Mobile-first design approach
-- Collapsible navigation for mobile
-- Adaptive component layouts
-- Touch-friendly interactions
-
-## Accessibility Features
-
-- **Keyboard Navigation**: Full keyboard support
-- **Screen Reader Support**: Proper ARIA labels and roles
-- **High Contrast**: Support for high contrast mode
-- **Reduced Motion**: Respects user motion preferences
-- **Focus Management**: Clear focus indicators
-- **Skip Links**: Skip to main content functionality
-
-## Testing
-
-### Unit Tests
+### Option 3: Skip TypeScript Checks
 ```bash
-npm test
+cd frontend
+npm run start:skip-check
 ```
 
-### Component Tests
+## Common Issues
+
+### "Cannot find module 'aws-amplify'"
+This is a common TypeScript/dependency issue. Try:
+
+1. **Use the installation script**: `./install-frontend-deps.sh`
+2. **Reinstall dependencies**: `rm -rf node_modules package-lock.json && npm install --legacy-peer-deps`
+3. **Skip TypeScript checks**: `npm run start:skip-check`
+
+### Dependency Conflicts
+If you get peer dependency warnings:
 ```bash
-npm run test:coverage
+npm install --legacy-peer-deps
 ```
 
-### End-to-End Tests
-```bash
-# Install Cypress
-npm install cypress --save-dev
+## Configuration
 
-# Run Cypress tests
-npx cypress open
-```
+The app uses environment variables from `.env`:
+- `REACT_APP_API_URL` - API endpoint
+- `REACT_APP_USER_POOL_ID` - Cognito User Pool ID
+- `REACT_APP_USER_POOL_CLIENT_ID` - Cognito Client ID
+- `REACT_APP_IDENTITY_POOL_ID` - Cognito Identity Pool ID
 
-## API Integration
+## Test Credentials
 
-The frontend communicates with the backend API through:
+- **Homeowner**: homeowner@test.com / Password123!
+- **Builder**: builder@test.com / Password123!
 
-- **Authentication**: JWT-based auth with automatic token refresh
-- **Project Management**: CRUD operations for projects
-- **AI Services**: Real-time AI assistance and guidance
-- **File Upload**: Secure document upload with progress tracking
-- **WebSocket**: Real-time notifications and updates
+## Available Scripts
 
-## Performance Optimization
+- `npm start` - Start development server
+- `npm run start:skip-check` - Start with TypeScript checks disabled
+- `npm run build` - Build for production
+- `npm test` - Run tests
 
-- **Code Splitting**: Lazy loading of route components
-- **Image Optimization**: Responsive images with lazy loading
-- **Bundle Analysis**: Webpack bundle analyzer integration
-- **Caching**: Service worker for offline functionality
-- **Compression**: Gzip compression for production builds
+## Troubleshooting
 
-## Deployment
-
-### Production Build
-```bash
-npm run build
-```
-
-### Docker Deployment
-```bash
-# Build Docker image
-docker build -t uk-home-improvement-frontend .
-
-# Run container
-docker run -p 3000:80 uk-home-improvement-frontend
-```
-
-## Contributing
-
-1. Follow the existing code style and patterns
-2. Write tests for new components and features
-3. Ensure accessibility compliance
-4. Test on multiple devices and browsers
-5. Update documentation as needed
-
-## Browser Support
-
-- Chrome 90+
-- Firefox 88+
-- Safari 14+
-- Edge 90+
-- Mobile browsers (iOS Safari, Chrome Mobile)
-
-## License
-
-MIT License - see LICENSE file for details
+See `TROUBLESHOOTING.md` for detailed solutions to common issues.
