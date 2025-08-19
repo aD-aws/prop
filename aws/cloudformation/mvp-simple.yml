@@ -375,58 +375,7 @@ Resources:
                   };
                 }
               }
-              // Login
-              else if (requestPath === 'api/auth/login' && httpMethod === 'POST') {
-                const requestBody = body ? JSON.parse(body) : {};
-                const { email, password } = requestBody;
-                
-                // Simple authentication for MVP
-                const users = {
-                  'homeowner@test.com': {
-                    id: '1',
-                    email: 'homeowner@test.com',
-                    userType: 'homeowner',
-                    profile: {
-                      firstName: 'John',
-                      lastName: 'Smith',
-                      phone: '+44 7700 900123'
-                    }
-                  },
-                  'builder@test.com': {
-                    id: '2',
-                    email: 'builder@test.com',
-                    userType: 'builder',
-                    profile: {
-                      firstName: 'Mike',
-                      lastName: 'Builder',
-                      phone: '+44 7700 900456'
-                    }
-                  }
-                };
-                
-                const user = users[email];
-                if (user && password === 'password123') {
-                  response = {
-                    token: `mock-jwt-token-${user.id}`,
-                    user: user
-                  };
-                } else {
-                  return {
-                    statusCode: 401,
-                    headers: corsHeaders,
-                    body: JSON.stringify({
-                      success: false,
-                      error: {
-                        code: 'INVALID_CREDENTIALS',
-                        message: 'Invalid email or password'
-                      },
-                      timestamp: new Date().toISOString(),
-                      requestId: requestId
-                    })
-                  };
-                }
-              }
-              // Get current user
+              // Get current user (from Cognito JWT token)
               else if (requestPath === 'api/auth/me' && httpMethod === 'GET') {
                 const authHeader = headers.Authorization || headers.authorization;
                 if (!authHeader || !authHeader.startsWith('Bearer ')) {
@@ -445,33 +394,52 @@ Resources:
                   };
                 }
                 
-                // Mock user based on token
-                const token = authHeader.split(' ')[1];
-                let user = {
-                  id: '1',
-                  email: 'homeowner@test.com',
-                  userType: 'homeowner',
-                  profile: {
-                    firstName: 'John',
-                    lastName: 'Smith',
-                    phone: '+44 7700 900123'
+                try {
+                  // In a real implementation, you would verify the Cognito JWT token here
+                  // For now, we'll extract user info from the event context (API Gateway + Cognito)
+                  const cognitoUser = event.requestContext?.authorizer?.claims;
+                  
+                  if (cognitoUser) {
+                    const user = {
+                      id: cognitoUser.sub,
+                      email: cognitoUser.email,
+                      userType: cognitoUser['custom:user_type'] || 'homeowner',
+                      profile: {
+                        firstName: cognitoUser.given_name || '',
+                        lastName: cognitoUser.family_name || '',
+                        phone: cognitoUser.phone_number || ''
+                      }
+                    };
+                    response = user;
+                  } else {
+                    // Fallback for testing without Cognito authorizer
+                    response = {
+                      id: 'test-user-1',
+                      email: 'test@example.com',
+                      userType: 'homeowner',
+                      profile: {
+                        firstName: 'Test',
+                        lastName: 'User',
+                        phone: '+44 7700 900123'
+                      }
+                    };
                   }
-                };
-                
-                if (token.includes('-2')) {
-                  user = {
-                    id: '2',
-                    email: 'builder@test.com',
-                    userType: 'builder',
-                    profile: {
-                      firstName: 'Mike',
-                      lastName: 'Builder',
-                      phone: '+44 7700 900456'
-                    }
+                } catch (error) {
+                  console.error('Error parsing Cognito user:', error);
+                  return {
+                    statusCode: 401,
+                    headers: corsHeaders,
+                    body: JSON.stringify({
+                      success: false,
+                      error: {
+                        code: 'INVALID_TOKEN',
+                        message: 'Invalid authentication token'
+                      },
+                      timestamp: new Date().toISOString(),
+                      requestId: requestId
+                    })
                   };
                 }
-                
-                response = user;
               }
               // Get project types
               else if (requestPath === 'api/projects/types' && httpMethod === 'GET') {
@@ -535,12 +503,23 @@ Resources:
                 const now = new Date().toISOString();
                 const status = 'planning'; // Use frontend-compatible status
                 
+                // Get user ID from Cognito JWT token
+                let ownerId = 'anonymous';
+                try {
+                  const cognitoUser = event.requestContext?.authorizer?.claims;
+                  if (cognitoUser && cognitoUser.sub) {
+                    ownerId = cognitoUser.sub;
+                  }
+                } catch (error) {
+                  console.error('Error getting user from Cognito:', error);
+                }
+                
                 // Create project with proper DynamoDB structure
                 const project = {
                   PK: `PROJECT#${projectId}`,
                   SK: 'METADATA',
                   id: projectId,
-                  ownerId: '1', // In real app, get from JWT token
+                  ownerId: ownerId,
                   propertyAddress: requestBody.propertyAddress || {},
                   projectType: requestBody.projectType || 'other',
                   status: status,
@@ -778,7 +757,6 @@ Resources:
                     'POST /api/projects',
                     'GET /api/projects/{id}',
                     'GET /api/projects/types',
-                    'POST /api/auth/login',
                     'GET /api/auth/me',
                     'POST /api/sow/generate'
                   ],

@@ -12,12 +12,19 @@ class ApiService {
       },
     });
 
-    // Request interceptor to add auth token
+    // Request interceptor to add Cognito auth token
     this.api.interceptors.request.use(
-      (config) => {
-        const token = localStorage.getItem('authToken');
-        if (token) {
-          config.headers.Authorization = `Bearer ${token}`;
+      async (config) => {
+        try {
+          // Import fetchAuthSession dynamically to avoid circular dependencies
+          const { fetchAuthSession } = await import('aws-amplify/auth');
+          const session = await fetchAuthSession();
+          
+          if (session.tokens?.accessToken) {
+            config.headers.Authorization = `Bearer ${session.tokens.accessToken.toString()}`;
+          }
+        } catch (error) {
+          console.log('No auth session found');
         }
         return config;
       },
@@ -29,9 +36,15 @@ class ApiService {
     // Response interceptor to handle auth errors
     this.api.interceptors.response.use(
       (response) => response,
-      (error) => {
+      async (error) => {
         if (error.response?.status === 401) {
-          localStorage.removeItem('authToken');
+          try {
+            // Sign out from Cognito
+            const { signOut } = await import('aws-amplify/auth');
+            await signOut();
+          } catch (signOutError) {
+            console.error('Error signing out:', signOutError);
+          }
           window.location.href = '/login';
         }
         return Promise.reject(error);

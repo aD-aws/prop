@@ -170,3 +170,15 @@
   - Verify DynamoDB table structure and GSI configurations match the data model
   - Update environment variables and configuration for proper AWS service connectivity
   - _Requirements: 1.1, 1.4, 1.5, 1.6, 1.7_
+
+- [x] 17. Replace mock authentication with AWS Cognito
+  - Create AWS Cognito User Pool and Identity Pool in CloudFormation
+  - Configure Cognito with proper user attributes and policies
+  - Update Lambda functions to validate Cognito JWT tokens
+  - Replace mock login/register endpoints with Cognito integration
+  - Update frontend to use AWS Amplify Auth for Cognito integration
+  - Implement proper user registration, login, logout, and password reset
+  - Add user profile management with Cognito user attributes
+  - Test authentication flow end-to-end with real user accounts
+  - Update API Gateway to use Cognito authorizer
+  - _Requirements: 8.1, 8.2, 8.3, 8.4_

@@ -1,5 +1,10 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { authService } from '../services/authService';
+import { Amplify } from 'aws-amplify';
+import { signIn, signOut, signUp, getCurrentUser, fetchAuthSession, AuthUser, confirmSignUp } from 'aws-amplify/auth';
+import awsConfig from '../aws-config';
+
+// Configure Amplify
+Amplify.configure(awsConfig);
 
 interface User {
   id: string;
@@ -9,16 +14,8 @@ interface User {
     firstName: string;
     lastName: string;
     phone?: string;
+    companyName?: string;
   };
-}
-
-interface AuthContextType {
-  user: User | null;
-  loading: boolean;
-  login: (email: string, password: string) => Promise<void>;
-  register: (userData: RegisterData) => Promise<void>;
-  logout: () => void;
-  isAuthenticated: boolean;
 }
 
 interface RegisterData {
@@ -28,6 +25,17 @@ interface RegisterData {
   lastName: string;
   userType: 'homeowner' | 'builder';
   phone?: string;
+  companyName?: string;
+}
+
+interface AuthContextType {
+  user: User | null;
+  loading: boolean;
+  login: (email: string, password: string) => Promise<void>;
+  register: (userData: RegisterData) => Promise<{ needsConfirmation: boolean }>;
+  confirmRegistration: (email: string, code: string) => Promise<void>;
+  logout: () => Promise<void>;
+  isAuthenticated: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -48,17 +56,55 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
 
+  // Convert Cognito user to our User interface
+  const convertCognitoUser = async (cognitoUser: AuthUser): Promise<User> => {
+    try {
+      const session = await fetchAuthSession();
+      const idToken = session.tokens?.idToken;
+      
+      if (idToken) {
+        const payload = idToken.payload;
+        
+        return {
+          id: cognitoUser.userId,
+          email: payload.email as string || '',
+          userType: (payload['custom:user_type'] as string) || 'homeowner',
+          profile: {
+            firstName: payload.given_name as string || '',
+            lastName: payload.family_name as string || '',
+            phone: payload.phone_number as string || '',
+            companyName: payload['custom:company_name'] as string || '',
+          },
+        };
+      }
+    } catch (error) {
+      console.error('Error converting Cognito user:', error);
+    }
+    
+    // Fallback user object
+    return {
+      id: cognitoUser.userId,
+      email: cognitoUser.signInDetails?.loginId || '',
+      userType: 'homeowner',
+      profile: {
+        firstName: '',
+        lastName: '',
+        phone: '',
+      },
+    };
+  };
+
   useEffect(() => {
     const initializeAuth = async () => {
       try {
-        const token = localStorage.getItem('authToken');
-        if (token) {
-          const userData = await authService.getCurrentUser();
+        const cognitoUser = await getCurrentUser();
+        if (cognitoUser) {
+          const userData = await convertCognitoUser(cognitoUser);
           setUser(userData);
         }
       } catch (error) {
-        console.error('Failed to initialize auth:', error);
-        localStorage.removeItem('authToken');
+        console.log('No authenticated user found');
+        setUser(null);
       } finally {
         setLoading(false);
       }
@@ -69,27 +115,94 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const login = async (email: string, password: string) => {
     try {
-      const response = await authService.login(email, password);
-      localStorage.setItem('authToken', response.token);
-      setUser(response.user);
-    } catch (error) {
-      throw error;
+      setLoading(true);
+      const { isSignedIn } = await signIn({
+        username: email,
+        password: password,
+      });
+
+      if (isSignedIn) {
+        const cognitoUser = await getCurrentUser();
+        const userData = await convertCognitoUser(cognitoUser);
+        setUser(userData);
+      }
+    } catch (error: any) {
+      console.error('Login error:', error);
+      
+      // Handle specific Cognito errors
+      if (error.name === 'NotAuthorizedException') {
+        throw new Error('Invalid email or password');
+      } else if (error.name === 'UserNotConfirmedException') {
+        throw new Error('Please verify your email address');
+      } else if (error.name === 'PasswordResetRequiredException') {
+        throw new Error('Password reset required');
+      } else if (error.name === 'UserNotFoundException') {
+        throw new Error('User not found');
+      } else {
+        throw new Error(error.message || 'Login failed');
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
-  const register = async (userData: RegisterData) => {
+  const register = async (userData: RegisterData): Promise<{ needsConfirmation: boolean }> => {
     try {
-      const response = await authService.register(userData);
-      localStorage.setItem('authToken', response.token);
-      setUser(response.user);
-    } catch (error) {
-      throw error;
+      const { isSignUpComplete } = await signUp({
+        username: userData.email,
+        password: userData.password,
+        options: {
+          userAttributes: {
+            email: userData.email,
+            given_name: userData.firstName,
+            family_name: userData.lastName,
+            phone_number: userData.phone || '',
+            'custom:user_type': userData.userType,
+            'custom:company_name': userData.companyName || '',
+          },
+        },
+      });
+
+      return { needsConfirmation: !isSignUpComplete };
+    } catch (error: any) {
+      console.error('Registration error:', error);
+      
+      if (error.name === 'UsernameExistsException') {
+        throw new Error('An account with this email already exists');
+      } else if (error.name === 'InvalidPasswordException') {
+        throw new Error('Password does not meet requirements');
+      } else {
+        throw new Error(error.message || 'Registration failed');
+      }
     }
   };
 
-  const logout = () => {
-    localStorage.removeItem('authToken');
-    setUser(null);
+  const confirmRegistration = async (email: string, code: string) => {
+    try {
+      await confirmSignUp({
+        username: email,
+        confirmationCode: code,
+      });
+    } catch (error: any) {
+      console.error('Confirmation error:', error);
+      
+      if (error.name === 'CodeMismatchException') {
+        throw new Error('Invalid confirmation code');
+      } else if (error.name === 'ExpiredCodeException') {
+        throw new Error('Confirmation code has expired');
+      } else {
+        throw new Error(error.message || 'Confirmation failed');
+      }
+    }
+  };
+
+  const logout = async () => {
+    try {
+      await signOut();
+      setUser(null);
+    } catch (error) {
+      console.error('Logout error:', error);
+    }
   };
 
   const value: AuthContextType = {
@@ -97,6 +210,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
     loading,
     login,
     register,
+    confirmRegistration,
     logout,
     isAuthenticated: !!user,
   };
