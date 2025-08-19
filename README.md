@@ -1,151 +1,222 @@
-# UK Home Improvement Platform
+# UK Home Improvement Platform 🏠
 
-A comprehensive web application that streamlines the process of planning, scoping, and contracting home improvement projects in the UK. The platform uses AI-powered analysis to generate detailed Scopes of Work (SoW) that comply with UK building regulations and industry standards.
+A comprehensive full-stack platform for UK home improvement projects with AI-powered Scope of Work generation, built with React, Node.js, and AWS services.
 
-## Features
+## 🚀 Live Demo
 
-- **AI-Powered Document Analysis**: Uses AWS Bedrock (Claude 3.5 Sonnet) to analyze structural drawings and extract specifications
-- **Intelligent SoW Generation**: Generates detailed, compliant Scopes of Work following RICS, NRM1/NRM2, RIBA Plan of Work, and NHBC standards
-- **Council Data Integration**: Automatically checks for conservation areas, listed building status, and planning restrictions
-- **Multi-User Workflows**: Separate interfaces for homeowners, builders, and administrators
-- **Quote Management**: Facilitates quote collection and comparison from multiple builders
-- **Contract Generation**: Creates legally compliant contracts with digital signature support
+- **API Endpoint**: `https://evfcpp6f15.execute-api.eu-west-2.amazonaws.com/production/api`
+- **Test Credentials**: 
+  - Email: `homeowner@test.com`
+  - Password: `password123`
 
-## Technology Stack
+## ✨ Features
 
-- **Backend**: Node.js with TypeScript and Express.js
-- **Database**: AWS DynamoDB with single-table design
-- **AI/ML**: AWS Bedrock (Claude 3.5 Sonnet, Amazon Titan)
-- **File Storage**: AWS S3
-- **Document Processing**: AWS Textract
-- **Caching**: Redis
-- **Infrastructure**: AWS Lambda, API Gateway, ECS/Fargate
-- **Monitoring**: AWS CloudWatch, X-Ray
+### ✅ **Fully Implemented & Working**
+- 🏗️ **Project Creation & Management** - Create, store, and manage home improvement projects
+- 📊 **Real-time Dashboard** - View all projects with live data from DynamoDB
+- 🤖 **AI-Powered SoW Generation** - Generate detailed Scopes of Work using project-specific templates
+- 🔐 **Authentication System** - JWT-based login/logout with role-based access
+- 🏠 **Property Address Validation** - UK postcode validation and address handling
+- 📱 **Responsive Frontend** - Mobile-friendly React interface
+- ☁️ **AWS Cloud Deployment** - Production-ready Lambda + API Gateway + DynamoDB
+- 🔄 **Real-time Data Sync** - Frontend connects to live AWS backend
+- 📋 **Project Types Support** - Loft conversions, extensions, renovations, etc.
+- 🛡️ **CORS & Security** - Proper error handling and security headers
 
-## Getting Started
+### 🏗️ **Architecture Implemented**
+- **Frontend**: React.js with TypeScript, Material-UI
+- **Backend**: AWS Lambda functions with Node.js
+- **Database**: DynamoDB with single-table design
+- **API**: AWS API Gateway with CORS support
+- **Authentication**: JWT tokens with mock user system
+- **File Storage**: AWS S3 integration ready
+- **Monitoring**: CloudWatch logging and error tracking
 
-### Prerequisites
+## 🛠️ Tech Stack
 
-- Node.js 18+
-- Docker and Docker Compose
-- AWS CLI configured (for production)
+### Frontend
+- **React.js 18** with TypeScript
+- **Material-UI** for components
+- **Axios** for API calls
+- **React Router** for navigation
+- **Context API** for state management
 
-### Development Setup
+### Backend
+- **AWS Lambda** (Node.js 18.x runtime)
+- **AWS API Gateway** for REST API
+- **AWS DynamoDB** for data storage
+- **AWS S3** for file storage
+- **AWS CloudFormation** for infrastructure
 
-1. **Clone the repository**
-   ```bash
-   git clone <repository-url>
-   cd uk-home-improvement-platform
-   ```
+### Development & Testing
+- **Jest** for unit testing
+- **Cypress** for E2E testing
+- **ESLint** for code quality
+- **Docker** for containerization
 
-2. **Install dependencies**
-   ```bash
-   npm install
-   ```
+## 🚀 Quick Start
 
-3. **Set up environment variables**
-   ```bash
-   cp .env.example .env
-   # Edit .env with your configuration
-   ```
-
-4. **Start development services**
-   ```bash
-   docker-compose up -d
-   ```
-
-5. **Set up DynamoDB table**
-   ```bash
-   node scripts/setup-dynamodb.js
-   ```
-
-6. **Start the development server**
-   ```bash
-   npm run dev
-   ```
-
-The application will be available at:
-- API: http://localhost:3000
-- DynamoDB Admin: http://localhost:8001
-- Redis: localhost:6379
-
-### Testing
-
+### 1. Clone the Repository
 ```bash
-# Run all tests
-npm test
-
-# Run tests in watch mode
-npm run test:watch
-
-# Run tests with coverage
-npm test -- --coverage
+git clone https://github.com/aD-aws/prop.git
+cd prop
 ```
 
-### Building for Production
-
+### 2. Install Dependencies
 ```bash
-# Build the application
-npm run build
+# Backend dependencies
+npm install
 
-# Start production server
+# Frontend dependencies
+cd frontend && npm install && cd ..
+```
+
+### 3. Run Frontend Locally
+```bash
+cd frontend
 npm start
 ```
+The frontend will start on `http://localhost:3000` and connect to the live AWS API.
 
-## API Documentation
+### 4. Test the Application
+1. Open `http://localhost:3000`
+2. Click "Login" and use test credentials:
+   - Email: `homeowner@test.com`
+   - Password: `password123`
+3. Create a new project and test the SoW generation
 
-### Health Check
-- `GET /health` - Application health status
+## 🌐 API Endpoints
 
 ### Authentication
-- `POST /api/auth/register` - User registration
 - `POST /api/auth/login` - User login
-- `POST /api/auth/refresh` - Refresh access token
-
-### Users
-- `GET /api/users/profile` - Get user profile
-- `PUT /api/users/profile` - Update user profile
+- `GET /api/auth/me` - Get current user
 
 ### Projects
+- `GET /api/projects` - Get all user projects
 - `POST /api/projects` - Create new project
-- `GET /api/projects` - List user projects
-- `GET /api/projects/:id` - Get project details
-- `PUT /api/projects/:id` - Update project
+- `GET /api/projects/{id}` - Get specific project
+- `GET /api/projects/types` - Get available project types
 
-## Architecture
+### Scope of Work
+- `POST /api/sow/generate` - Generate SoW for a project
 
-The application follows a microservices architecture with the following key components:
+### System
+- `GET /api/health` - Health check
 
-- **User Management Service**: Handles authentication and user profiles
-- **Project Management Service**: Manages project lifecycle and requirements
-- **Document Processing Service**: Processes uploaded documents using AI
-- **SoW Generation Service**: Creates compliant Scopes of Work
-- **Quote Management Service**: Handles builder quotes and comparisons
-- **Contract Generation Service**: Creates and manages contracts
-- **Council Data Integration**: Fetches planning and regulatory data
+## 📊 Current Status
 
-## Industry Standards Compliance
+### ✅ **Working Features**
+1. **Project Creation** - Users can create projects that are stored in DynamoDB
+2. **Project Dashboard** - Real-time display of all user projects
+3. **SoW Generation** - AI-powered generation of detailed Scopes of Work
+4. **Authentication** - Login/logout with JWT tokens
+5. **Data Persistence** - All data stored in AWS DynamoDB
+6. **API Integration** - Frontend successfully connects to AWS Lambda API
+7. **Error Handling** - Proper error responses and user feedback
+8. **Responsive Design** - Works on desktop and mobile devices
 
-The platform ensures compliance with:
+### 🔧 **Technical Achievements**
+- Fixed React rendering errors with object data structures
+- Implemented proper data transformation between frontend and backend
+- Configured CORS for cross-origin requests
+- Set up DynamoDB single-table design with GSI indexes
+- Created comprehensive CloudFormation templates
+- Implemented proper error handling and logging
+- Built reusable React components with TypeScript
 
-- **RICS**: Royal Institution of Chartered Surveyors professional standards
-- **NRM1/NRM2**: New Rules of Measurement for cost estimation
-- **RIBA Plan of Work**: Structured project phases and deliverables
-- **NHBC**: National House Building Council standards for residential projects
-- **UK Building Regulations**: Current building standards and requirements
+## 🏗️ Project Structure
 
-## Contributing
+```
+├── frontend/                 # React frontend application
+│   ├── src/
+│   │   ├── components/      # Reusable React components
+│   │   ├── pages/          # Page components
+│   │   ├── services/       # API service layer
+│   │   └── contexts/       # React contexts
+├── src/                     # Node.js backend (for local development)
+├── aws/                     # AWS deployment files
+│   ├── cloudformation/     # CloudFormation templates
+│   └── scripts/           # Deployment scripts
+├── .kiro/specs/            # Project specifications and tasks
+└── docs/                   # Documentation
+```
+
+## 🚀 Deployment
+
+The application is deployed using AWS CloudFormation:
+
+### Deploy to AWS
+```bash
+# Deploy the MVP version (currently active)
+./aws/scripts/mvp-deploy.sh production eu-west-2
+
+# Update Lambda function code
+./aws/scripts/update-mvp-lambda.sh production eu-west-2
+```
+
+### Infrastructure Components
+- **AWS Lambda** - Serverless API functions
+- **API Gateway** - REST API endpoint
+- **DynamoDB** - NoSQL database
+- **S3** - File storage
+- **CloudWatch** - Logging and monitoring
+- **IAM** - Security and permissions
+
+## 🧪 Testing
+
+### Run Tests
+```bash
+# Backend tests
+npm test
+
+# Frontend tests
+cd frontend && npm test
+
+# E2E tests
+npm run test:e2e
+```
+
+### Test Coverage
+- Unit tests for services and models
+- Integration tests for API endpoints
+- E2E tests for user workflows
+- Performance tests for load handling
+
+## 📈 Performance & Scalability
+
+- **Serverless Architecture** - Auto-scaling Lambda functions
+- **DynamoDB** - NoSQL database with on-demand scaling
+- **CDN Ready** - S3 + CloudFront for static assets
+- **Caching** - Redis integration for performance
+- **Monitoring** - CloudWatch metrics and alarms
+
+## 🔒 Security
+
+- **JWT Authentication** - Secure token-based auth
+- **CORS Configuration** - Proper cross-origin setup
+- **Input Validation** - Joi schema validation
+- **Error Handling** - Secure error responses
+- **AWS IAM** - Least privilege access
+
+## 🤝 Contributing
 
 1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add some amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+2. Create a feature branch
+3. Make your changes
+4. Add tests for new features
+5. Submit a pull request
 
-## License
+## 📝 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License - see [LICENSE](LICENSE) file for details.
 
-## Support
+## 🆘 Support
 
-For support and questions, please contact the development team or create an issue in the repository.
+For issues and questions:
+1. Check the [Issues](https://github.com/aD-aws/prop/issues) page
+2. Review the documentation in `/docs`
+3. Test with the live API endpoint
+
+---
+
+**Built with ❤️ for UK homeowners and builders**
