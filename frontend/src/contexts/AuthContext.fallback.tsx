@@ -1,8 +1,7 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
-import { authService } from '../services/authService';
 
-// Fallback AuthContext without AWS Amplify
-// Use this if you're having issues with AWS Amplify dependencies
+// Fallback AuthContext for when AWS Amplify is not available
+// This provides the same interface but with mock functionality
 
 interface User {
   id: string;
@@ -52,58 +51,56 @@ interface AuthProviderProps {
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [loading, setLoading] = useState(true);
-
-  useEffect(() => {
-    const initializeAuth = async () => {
-      try {
-        const token = localStorage.getItem('authToken');
-        if (token) {
-          const userData = await authService.getCurrentUser();
-          setUser(userData);
-        }
-      } catch (error) {
-        console.error('Failed to initialize auth:', error);
-        localStorage.removeItem('authToken');
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    initializeAuth();
-  }, []);
+  const [loading, setLoading] = useState(false);
 
   const login = async (email: string, password: string) => {
     try {
       setLoading(true);
-      const response = await authService.login(email, password);
-      localStorage.setItem('authToken', response.token);
-      setUser(response.user);
-    } catch (error) {
-      throw error;
+      
+      // Mock authentication - replace with actual API call
+      if (email === 'homeowner@test.com' && password === 'Password123!') {
+        const mockUser: User = {
+          id: '1',
+          email: 'homeowner@test.com',
+          userType: 'homeowner',
+          profile: {
+            firstName: 'John',
+            lastName: 'Smith',
+            phone: '+44 7700 900123',
+          },
+        };
+        setUser(mockUser);
+      } else if (email === 'builder@test.com' && password === 'Password123!') {
+        const mockUser: User = {
+          id: '2',
+          email: 'builder@test.com',
+          userType: 'builder',
+          profile: {
+            firstName: 'Mike',
+            lastName: 'Builder',
+            phone: '+44 7700 900456',
+            companyName: 'Builder Co Ltd',
+          },
+        };
+        setUser(mockUser);
+      } else {
+        throw new Error('Invalid email or password');
+      }
     } finally {
       setLoading(false);
     }
   };
 
   const register = async (userData: RegisterData): Promise<{ needsConfirmation: boolean }> => {
-    try {
-      const response = await authService.register(userData);
-      localStorage.setItem('authToken', response.token);
-      setUser(response.user);
-      return { needsConfirmation: false };
-    } catch (error) {
-      throw error;
-    }
+    // Mock registration
+    return { needsConfirmation: false };
   };
 
   const confirmRegistration = async (email: string, code: string) => {
-    // Mock implementation for fallback
-    console.log('Confirmation not needed in fallback mode');
+    // Mock confirmation
   };
 
   const logout = async () => {
-    localStorage.removeItem('authToken');
     setUser(null);
   };
 

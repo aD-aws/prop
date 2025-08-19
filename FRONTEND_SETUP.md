@@ -2,117 +2,138 @@
 
 ## Quick Fix for "Cannot find module 'aws-amplify'" Error
 
-### 🚀 **Fastest Solution**
-
-Run the automated fix script:
+### Option 1: Use the Fix Script (Recommended)
 ```bash
-./fix-frontend-dependencies.sh
+./fix-frontend-deps.sh
 ```
 
-### 🔧 **Manual Fix Steps**
-
-1. **Clean Dependencies**
-   ```bash
-   cd frontend
-   rm -rf node_modules package-lock.json
-   npm cache clean --force
-   ```
-
-2. **Install with Legacy Peer Deps**
-   ```bash
-   npm install --legacy-peer-deps
-   ```
-
-3. **Start the Frontend**
-   ```bash
-   npm start
-   # or if TypeScript errors persist:
-   npm run start:skip-check
-   ```
-
-### 🎯 **Alternative Approaches**
-
-#### Option 1: Use Startup Script
-```bash
-./start-frontend.sh
-```
-
-#### Option 2: Install Specific AWS Amplify Version
+### Option 2: Manual Fix
 ```bash
 cd frontend
-npm install aws-amplify@5.3.0 --legacy-peer-deps
+
+# Clean everything
+rm -rf node_modules package-lock.json
+npm cache clean --force
+
+# Install with legacy peer deps
+npm install --legacy-peer-deps
+
+# Start the app
 npm start
 ```
 
-#### Option 3: Skip TypeScript Preflight Check
+### Option 3: If Still Having Issues
 ```bash
 cd frontend
-SKIP_PREFLIGHT_CHECK=true npm start
+
+# Use the clean install script
+npm run install:clean
+
+# Or try with skip preflight check
+npm run start:skip-check
 ```
 
-#### Option 4: Use Package.json Scripts
+## Common Solutions
+
+### 1. Dependency Conflicts
+If you get peer dependency warnings:
 ```bash
 cd frontend
-npm run install:clean  # Clean install
-npm run start:force    # Start with all checks disabled
+npm install --legacy-peer-deps
 ```
 
-### 🔍 **Verify Installation**
-
-Check if AWS Amplify is properly installed:
+### 2. TypeScript Errors
+If TypeScript compilation fails:
 ```bash
 cd frontend
-ls node_modules/ | grep amplify
-npm list aws-amplify
+npm run start:skip-check
 ```
 
-### 🧪 **Test Credentials**
+### 3. Cache Issues
+If modules are not found:
+```bash
+cd frontend
+npm cache clean --force
+rm -rf node_modules package-lock.json
+npm install
+```
 
-Once the frontend starts, use these test accounts:
-- **Homeowner**: `homeowner@test.com` / `Password123!`
-- **Builder**: `builder@test.com` / `Password123!`
+### 4. Node Version Issues
+Make sure you're using Node.js 16 or higher:
+```bash
+node --version  # Should be 16.x or higher
+```
 
-### ❓ **Still Having Issues?**
+## Verification Steps
 
-1. **Check Node.js Version**
+1. **Check if aws-amplify is installed:**
    ```bash
-   node --version  # Should be 16+ 
-   npm --version   # Should be 8+
+   cd frontend
+   npm list aws-amplify
    ```
 
-2. **Try Different Node Version**
+2. **Test TypeScript compilation:**
    ```bash
-   # If using nvm
-   nvm use 18
-   npm install --legacy-peer-deps
+   cd frontend
+   npx tsc --noEmit
    ```
 
-3. **Use Fallback Authentication**
+3. **Start the development server:**
+   ```bash
+   cd frontend
+   npm start
+   ```
+
+## Expected Behavior
+
+- Frontend should start on `http://localhost:3000`
+- You should see the UK Home Improvement Platform login page
+- Test credentials:
+  - Homeowner: `homeowner@test.com` / `Password123!`
+  - Builder: `builder@test.com` / `Password123!`
+
+## Troubleshooting
+
+### Error: "Module not found: Can't resolve 'aws-amplify'"
+**Solution:** Run the fix script or manually clean and reinstall dependencies
+
+### Error: "There might be a problem with the project dependency tree"
+**Solution:** Use `npm run start:skip-check` or install with `--legacy-peer-deps`
+
+### Error: TypeScript compilation errors
+**Solution:** Use `SKIP_PREFLIGHT_CHECK=true npm start`
+
+### Error: Port 3000 already in use
+**Solution:** Kill the process using port 3000 or use a different port:
+```bash
+# Kill process on port 3000
+lsof -ti:3000 | xargs kill -9
+
+# Or start on different port
+PORT=3001 npm start
+```
+
+## Alternative: Use Fallback Authentication
+
+If AWS Amplify continues to cause issues, you can temporarily use the fallback authentication:
+
+1. Rename the current AuthContext:
    ```bash
    cd frontend/src/contexts
    mv AuthContext.tsx AuthContext.amplify.tsx
    mv AuthContext.fallback.tsx AuthContext.tsx
    ```
 
-4. **Check Detailed Logs**
-   ```bash
-   cd frontend
-   npm install --legacy-peer-deps --verbose
-   ```
+2. This will use mock authentication that works without AWS Amplify
 
-### 📋 **Expected Behavior**
+3. Test credentials remain the same:
+   - `homeowner@test.com` / `Password123!`
+   - `builder@test.com` / `Password123!`
 
-When working correctly:
-- ✅ Frontend starts on `http://localhost:3000`
-- ✅ No "Cannot find module" errors
-- ✅ Login page loads without TypeScript errors
-- ✅ Can authenticate with test credentials
-- ✅ API calls work to AWS Lambda backend
-
-### 🆘 **Get Help**
+## Support
 
 If none of these solutions work:
-1. Check `frontend/TROUBLESHOOTING.md` for more solutions
-2. Run `./test-frontend.sh` to verify configuration
-3. Check browser console for detailed error messages
-4. Verify AWS Cognito configuration in AWS Console
+1. Check the browser console for detailed error messages
+2. Verify Node.js version is 16 or higher
+3. Try creating a fresh React app to test if the issue is environment-related
+4. Check the `frontend/TROUBLESHOOTING.md` file for more solutions
