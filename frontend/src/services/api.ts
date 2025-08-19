@@ -16,12 +16,13 @@ class ApiService {
     this.api.interceptors.request.use(
       async (config) => {
         try {
-          // Import fetchAuthSession dynamically to avoid circular dependencies
-          const { fetchAuthSession } = await import('aws-amplify/auth');
-          const session = await fetchAuthSession();
+          // Import Auth dynamically to avoid circular dependencies
+          const { Auth } = await import('aws-amplify');
+          const session = await Auth.currentSession();
           
-          if (session.tokens?.accessToken) {
-            config.headers.Authorization = `Bearer ${session.tokens.accessToken.toString()}`;
+          if (session) {
+            const accessToken = session.getAccessToken();
+            config.headers.Authorization = `Bearer ${accessToken.getJwtToken()}`;
           }
         } catch (error) {
           console.log('No auth session found');
@@ -40,8 +41,8 @@ class ApiService {
         if (error.response?.status === 401) {
           try {
             // Sign out from Cognito
-            const { signOut } = await import('aws-amplify/auth');
-            await signOut();
+            const { Auth } = await import('aws-amplify');
+            await Auth.signOut();
           } catch (signOutError) {
             console.error('Error signing out:', signOutError);
           }
