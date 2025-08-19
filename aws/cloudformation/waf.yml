@@ -1,0 +1,355 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'UK Home Improvement Platform - AWS WAF Security'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [staging, production]
+    Description: Environment name
+
+Resources:
+  # WAF Web ACL
+  WebACL:
+    Type: AWS::WAFv2::WebACL
+    Properties:
+      Name: !Sub '${Environment}-uk-home-improvement-waf'
+      Scope: REGIONAL
+      DefaultAction:
+        Allow: {}
+      Description: !Sub 'WAF for ${Environment} UK Home Improvement Platform'
+      Rules:
+        # AWS Managed Rule - Core Rule Set
+        - Name: AWSManagedRulesCommonRuleSet
+          Priority: 1
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesCommonRuleSet
+              ExcludedRules:
+                - Name: SizeRestrictions_BODY
+                - Name: GenericRFI_BODY
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: CommonRuleSetMetric
+
+        # AWS Managed Rule - Known Bad Inputs
+        - Name: AWSManagedRulesKnownBadInputsRuleSet
+          Priority: 2
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesKnownBadInputsRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: KnownBadInputsRuleSetMetric
+
+        # AWS Managed Rule - SQL Injection
+        - Name: AWSManagedRulesSQLiRuleSet
+          Priority: 3
+          OverrideAction:
+            None: {}
+          Statement:
+            ManagedRuleGroupStatement:
+              VendorName: AWS
+              Name: AWSManagedRulesSQLiRuleSet
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: SQLiRuleSetMetric
+
+        # Rate Limiting Rule
+        - Name: RateLimitRule
+          Priority: 4
+          Action:
+            Block: {}
+          Statement:
+            RateBasedStatement:
+              Limit: 2000
+              AggregateKeyType: IP
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: RateLimitRuleMetric
+
+        # Geographic Restriction (Allow UK and common countries)
+        - Name: GeoRestrictionRule
+          Priority: 5
+          Action:
+            Block: {}
+          Statement:
+            NotStatement:
+              Statement:
+                GeoMatchStatement:
+                  CountryCodes:
+                    - GB  # United Kingdom
+                    - US  # United States
+                    - CA  # Canada
+                    - AU  # Australia
+                    - DE  # Germany
+                    - FR  # France
+                    - IE  # Ireland
+                    - NL  # Netherlands
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: GeoRestrictionRuleMetric
+
+        # Custom Rule - Block suspicious user agents
+        - Name: BlockSuspiciousUserAgents
+          Priority: 6
+          Action:
+            Block: {}
+          Statement:
+            ByteMatchStatement:
+              SearchString: 'bot'
+              FieldToMatch:
+                SingleHeader:
+                  Name: user-agent
+              TextTransformations:
+                - Priority: 0
+                  Type: LOWERCASE
+              PositionalConstraint: CONTAINS
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: SuspiciousUserAgentMetric
+
+        # Custom Rule - Protect admin endpoints
+        - Name: ProtectAdminEndpoints
+          Priority: 7
+          Action:
+            Block: {}
+          Statement:
+            AndStatement:
+              Statements:
+                - ByteMatchStatement:
+                    SearchString: '/api/admin'
+                    FieldToMatch:
+                      UriPath: {}
+                    TextTransformations:
+                      - Priority: 0
+                        Type: LOWERCASE
+                    PositionalConstraint: STARTS_WITH
+                - NotStatement:
+                    Statement:
+                      IPSetReferenceStatement:
+                        Arn: !GetAtt AdminIPSet.Arn
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: AdminEndpointProtectionMetric
+
+        # Custom Rule - File upload size limit
+        - Name: FileUploadSizeLimit
+          Priority: 8
+          Action:
+            Block: {}
+          Statement:
+            AndStatement:
+              Statements:
+                - ByteMatchStatement:
+                    SearchString: '/api/projects'
+                    FieldToMatch:
+                      UriPath: {}
+                    TextTransformations:
+                      - Priority: 0
+                        Type: LOWERCASE
+                    PositionalConstraint: CONTAINS
+                - ByteMatchStatement:
+                    SearchString: 'documents'
+                    FieldToMatch:
+                      UriPath: {}
+                    TextTransformations:
+                      - Priority: 0
+                        Type: LOWERCASE
+                    PositionalConstraint: CONTAINS
+                - SizeConstraintStatement:
+                    FieldToMatch:
+                      Body: {}
+                    ComparisonOperator: GT
+                    Size: 52428800  # 50MB
+                    TextTransformations:
+                      - Priority: 0
+                        Type: NONE
+          VisibilityConfig:
+            SampledRequestsEnabled: true
+            CloudWatchMetricsEnabled: true
+            MetricName: FileUploadSizeLimitMetric
+
+      VisibilityConfig:
+        SampledRequestsEnabled: true
+        CloudWatchMetricsEnabled: true
+        MetricName: !Sub '${Environment}UKHomeImprovementWAF'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # IP Set for Admin Access
+  AdminIPSet:
+    Type: AWS::WAFv2::IPSet
+    Properties:
+      Name: !Sub '${Environment}-admin-ip-set'
+      Scope: REGIONAL
+      IPAddressVersion: IPV4
+      Addresses:
+        - '10.0.0.0/8'      # Private networks
+        - '172.16.0.0/12'   # Private networks
+        - '192.168.0.0/16'  # Private networks
+        # Add specific admin IP addresses here
+      Description: 'IP addresses allowed to access admin endpoints'
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Associate WAF with ALB
+  WebACLAssociation:
+    Type: AWS::WAFv2::WebACLAssociation
+    Properties:
+      ResourceArn: !ImportValue
+        Fn::Sub: '${Environment}-ALB-Arn'
+      WebACLArn: !GetAtt WebACL.Arn
+
+  # CloudWatch Log Group for WAF
+  WAFLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub '/aws/wafv2/${Environment}-uk-home-improvement'
+      RetentionInDays: 30
+
+  # WAF Logging Configuration
+  WAFLoggingConfiguration:
+    Type: AWS::WAFv2::LoggingConfiguration
+    Properties:
+      ResourceArn: !GetAtt WebACL.Arn
+      LogDestinationConfigs:
+        - !Sub '${WAFLogGroup.Arn}:*'
+      LoggingFilter:
+        DefaultBehavior: KEEP
+        Filters:
+          - Behavior: KEEP
+            Conditions:
+              - ActionCondition:
+                  Action: BLOCK
+            Requirement: MEETS_ANY
+
+  # CloudWatch Alarms for WAF
+  WAFBlockedRequestsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-WAF-High-Blocked-Requests'
+      AlarmDescription: 'WAF is blocking a high number of requests'
+      MetricName: BlockedRequests
+      Namespace: AWS/WAFV2
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 100
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: WebACL
+          Value: !Sub '${Environment}-uk-home-improvement-waf'
+        - Name: Region
+          Value: !Ref AWS::Region
+        - Name: Rule
+          Value: ALL
+      AlarmActions:
+        - !ImportValue
+          Fn::Sub: '${Environment}-Alerts-Topic-Arn'
+
+  WAFRateLimitAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-WAF-Rate-Limit-Triggered'
+      AlarmDescription: 'WAF rate limiting is being triggered frequently'
+      MetricName: BlockedRequests
+      Namespace: AWS/WAFV2
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 50
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: WebACL
+          Value: !Sub '${Environment}-uk-home-improvement-waf'
+        - Name: Region
+          Value: !Ref AWS::Region
+        - Name: Rule
+          Value: RateLimitRule
+      AlarmActions:
+        - !ImportValue
+          Fn::Sub: '${Environment}-Alerts-Topic-Arn'
+
+  # Security monitoring dashboard widget
+  SecurityDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${Environment}-security-dashboard'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/WAFV2", "AllowedRequests", "WebACL", "${Environment}-uk-home-improvement-waf", "Region", "${AWS::Region}", "Rule", "ALL" ],
+                  [ ".", "BlockedRequests", ".", ".", ".", ".", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "WAF Request Overview",
+                "period": 300
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/WAFV2", "BlockedRequests", "WebACL", "${Environment}-uk-home-improvement-waf", "Region", "${AWS::Region}", "Rule", "RateLimitRule" ],
+                  [ "...", "GeoRestrictionRule" ],
+                  [ "...", "AWSManagedRulesCommonRuleSet" ],
+                  [ "...", "AWSManagedRulesSQLiRuleSet" ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "WAF Blocked Requests by Rule",
+                "period": 300
+              }
+            }
+          ]
+        }
+
+Outputs:
+  WebACLArn:
+    Description: WAF Web ACL ARN
+    Value: !GetAtt WebACL.Arn
+    Export:
+      Name: !Sub '${Environment}-WAF-WebACL-Arn'
+
+  WebACLId:
+    Description: WAF Web ACL ID
+    Value: !Ref WebACL
+    Export:
+      Name: !Sub '${Environment}-WAF-WebACL-Id'
+
+  SecurityDashboardURL:
+    Description: Security Dashboard URL
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${Environment}-security-dashboard'
+    Export:
+      Name: !Sub '${Environment}-Security-Dashboard-URL'

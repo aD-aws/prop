@@ -1,0 +1,233 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AWS API Connection Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 30px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .header {
+            text-align: center;
+            color: #2c3e50;
+            margin-bottom: 30px;
+        }
+        .test-section {
+            background: #e8f4fd;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+            border-left: 4px solid #3498db;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .status.loading {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
+        }
+        .test-button {
+            background: #007bff;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        .test-button:hover {
+            background: #0056b3;
+        }
+        .endpoint-info {
+            background: #f8f9fa;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+            border: 1px solid #dee2e6;
+            font-family: monospace;
+        }
+        .links {
+            text-align: center;
+            margin-top: 30px;
+        }
+        .links a {
+            display: inline-block;
+            margin: 10px;
+            padding: 15px 30px;
+            background: #28a745;
+            color: white;
+            text-decoration: none;
+            border-radius: 5px;
+            font-weight: bold;
+        }
+        .links a:hover {
+            background: #218838;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🚀 AWS API Connection Test</h1>
+            <h2>UK Home Improvement Platform</h2>
+        </div>
+
+        <div class="test-section">
+            <h3>🔗 API Endpoint Information</h3>
+            <div class="endpoint-info">
+                <strong>Base URL:</strong> https://evfcpp6f15.execute-api.eu-west-2.amazonaws.com/production<br>
+                <strong>Health Check:</strong> /api/health<br>
+                <strong>Projects:</strong> /api/projects<br>
+                <strong>Login:</strong> /api/auth/login
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>🧪 API Tests</h3>
+            <button class="test-button" onclick="testHealthCheck()">Test Health Check</button>
+            <button class="test-button" onclick="testProjects()">Test Projects API</button>
+            <button class="test-button" onclick="testLogin()">Test Login API</button>
+            <button class="test-button" onclick="testAllEndpoints()">Test All Endpoints</button>
+            <div id="test-results"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>🔑 Test Credentials</h3>
+            <p><strong>Email:</strong> homeowner@test.com</p>
+            <p><strong>Password:</strong> password123</p>
+        </div>
+
+        <div class="links">
+            <a href="http://localhost:3000" target="_blank">🌐 Open React Frontend</a>
+            <a href="https://evfcpp6f15.execute-api.eu-west-2.amazonaws.com/production/api/health" target="_blank">🔧 Direct API Health Check</a>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE_URL = 'https://evfcpp6f15.execute-api.eu-west-2.amazonaws.com/production';
+        
+        function showStatus(message, type = 'loading') {
+            const resultsDiv = document.getElementById('test-results');
+            resultsDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
+        }
+
+        function addStatus(message, type = 'success') {
+            const resultsDiv = document.getElementById('test-results');
+            resultsDiv.innerHTML += `<div class="status ${type}">${message}</div>`;
+        }
+
+        async function testHealthCheck() {
+            showStatus('🔍 Testing health check endpoint...', 'loading');
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/health`);
+                const data = await response.json();
+                
+                if (response.ok && data.success) {
+                    addStatus(`✅ Health Check: ${data.message}`, 'success');
+                    addStatus(`📅 Timestamp: ${data.timestamp}`, 'success');
+                    addStatus(`🌍 Environment: ${data.environment}`, 'success');
+                } else {
+                    addStatus(`❌ Health check failed: ${JSON.stringify(data)}`, 'error');
+                }
+            } catch (error) {
+                addStatus(`❌ Health check error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testProjects() {
+            showStatus('🏠 Testing projects endpoint...', 'loading');
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/projects`);
+                const data = await response.json();
+                
+                if (response.ok && data.success) {
+                    addStatus(`✅ Projects API working! Found ${data.data.length} projects`, 'success');
+                    data.data.forEach((project, index) => {
+                        addStatus(`📋 Project ${index + 1}: ${project.name} (${project.type})`, 'success');
+                    });
+                } else {
+                    addStatus(`❌ Projects API failed: ${JSON.stringify(data)}`, 'error');
+                }
+            } catch (error) {
+                addStatus(`❌ Projects API error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testLogin() {
+            showStatus('🔐 Testing login endpoint...', 'loading');
+            
+            try {
+                const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        email: 'homeowner@test.com',
+                        password: 'password123'
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.token) {
+                    addStatus(`✅ Login successful!`, 'success');
+                    addStatus(`👤 User: ${data.user.profile.firstName} ${data.user.profile.lastName}`, 'success');
+                    addStatus(`📧 Email: ${data.user.email}`, 'success');
+                    addStatus(`🏷️ Type: ${data.user.userType}`, 'success');
+                    addStatus(`🎫 Token: ${data.token.substring(0, 20)}...`, 'success');
+                } else {
+                    addStatus(`❌ Login failed: ${data.error?.message || 'Unknown error'}`, 'error');
+                }
+            } catch (error) {
+                addStatus(`❌ Login error: ${error.message}`, 'error');
+            }
+        }
+
+        async function testAllEndpoints() {
+            showStatus('🚀 Testing all endpoints...', 'loading');
+            
+            await testHealthCheck();
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+            
+            await testProjects();
+            await new Promise(resolve => setTimeout(resolve, 1000)); // Wait 1 second
+            
+            await testLogin();
+            
+            addStatus('🎉 All tests completed!', 'success');
+        }
+
+        // Auto-run health check on page load
+        window.onload = function() {
+            testHealthCheck();
+        };
+    </script>
+</body>
+</html>

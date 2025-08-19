@@ -1,0 +1,417 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'UK Home Improvement Platform - Lambda Functions'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [staging, production]
+    Description: Environment name
+
+Resources:
+  # Lambda Execution Role
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: '*'
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: '*'
+        - PolicyName: BedrockAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - bedrock:InvokeModel
+                  - bedrock:InvokeModelWithResponseStream
+                Resource: '*'
+        - PolicyName: TextractAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - textract:DetectDocumentText
+                  - textract:AnalyzeDocument
+                  - textract:StartDocumentAnalysis
+                  - textract:GetDocumentAnalysis
+                Resource: '*'
+        - PolicyName: SNSAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - sns:Publish
+                Resource: '*'
+        - PolicyName: SESAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - ses:SendEmail
+                  - ses:SendRawEmail
+                Resource: '*'
+
+  # Document Processing Lambda
+  DocumentProcessingFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-document-processing'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const textract = new AWS.Textract();
+          const bedrock = new AWS.BedrockRuntime();
+          const dynamodb = new AWS.DynamoDB.DocumentClient();
+          
+          exports.handler = async (event) => {
+            console.log('Document processing event:', JSON.stringify(event, null, 2));
+            
+            try {
+              const { bucket, key, projectId } = event;
+              
+              // Start Textract analysis
+              const textractParams = {
+                DocumentLocation: {
+                  S3Object: {
+                    Bucket: bucket,
+                    Name: key
+                  }
+                },
+                FeatureTypes: ['TABLES', 'FORMS']
+              };
+              
+              const textractResult = await textract.startDocumentAnalysis(textractParams).promise();
+              
+              // Use Bedrock for document classification
+              const bedrockParams = {
+                modelId: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
+                contentType: 'application/json',
+                accept: 'application/json',
+                body: JSON.stringify({
+                  anthropic_version: 'bedrock-2023-05-31',
+                  max_tokens: 1000,
+                  messages: [{
+                    role: 'user',
+                    content: `Analyze this document and classify it as one of: structural_drawing, calculation, specification, planning_document, other. Document key: ${key}`
+                  }]
+                })
+              };
+              
+              const bedrockResult = await bedrock.invokeModel(bedrockParams).promise();
+              const response = JSON.parse(bedrockResult.body.toString());
+              
+              // Update project with processing status
+              await dynamodb.update({
+                TableName: process.env.DYNAMODB_TABLE,
+                Key: {
+                  PK: `PROJECT#${projectId}`,
+                  SK: 'METADATA'
+                },
+                UpdateExpression: 'SET documentProcessingStatus = :status, lastProcessed = :timestamp',
+                ExpressionAttributeValues: {
+                  ':status': 'processing',
+                  ':timestamp': new Date().toISOString()
+                }
+              }).promise();
+              
+              return {
+                statusCode: 200,
+                body: JSON.stringify({
+                  textractJobId: textractResult.JobId,
+                  classification: response.content[0].text,
+                  status: 'processing'
+                })
+              };
+            } catch (error) {
+              console.error('Error processing document:', error);
+              throw error;
+            }
+          };
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Sub '${Environment}-uk-home-improvement'
+      Timeout: 300
+      MemorySize: 512
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !ImportValue
+            Fn::Sub: '${Environment}-PrivateSubnet1-ID'
+          - !ImportValue
+            Fn::Sub: '${Environment}-PrivateSubnet2-ID'
+
+  # SoW Generation Lambda
+  SoWGenerationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-sow-generation'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const bedrock = new AWS.BedrockRuntime();
+          const dynamodb = new AWS.DynamoDB.DocumentClient();
+          
+          exports.handler = async (event) => {
+            console.log('SoW generation event:', JSON.stringify(event, null, 2));
+            
+            try {
+              const { projectId, projectData } = event;
+              
+              // Generate SoW using Bedrock
+              const prompt = `Generate a detailed Scope of Work for a UK home improvement project following RICS, NRM1/NRM2, RIBA Plan of Work, and NHBC standards.
+              
+              Project Details:
+              - Type: ${projectData.projectType}
+              - Address: ${projectData.propertyAddress}
+              - Requirements: ${JSON.stringify(projectData.requirements)}
+              
+              Please structure the SoW according to RIBA Plan of Work stages and include:
+              1. Project overview and objectives
+              2. Detailed specifications by work stage
+              3. Materials list with UK suppliers
+              4. Cost estimates using NRM1/NRM2 methodology
+              5. Timeline and milestones
+              6. Compliance requirements and certifications needed
+              7. Health and safety considerations
+              
+              Ensure all content is specific, measurable, and compliant with UK building regulations.`;
+              
+              const bedrockParams = {
+                modelId: 'anthropic.claude-3-5-sonnet-20241022-v2:0',
+                contentType: 'application/json',
+                accept: 'application/json',
+                body: JSON.stringify({
+                  anthropic_version: 'bedrock-2023-05-31',
+                  max_tokens: 4000,
+                  messages: [{
+                    role: 'user',
+                    content: prompt
+                  }]
+                })
+              };
+              
+              const bedrockResult = await bedrock.invokeModel(bedrockParams).promise();
+              const response = JSON.parse(bedrockResult.body.toString());
+              
+              const sowContent = response.content[0].text;
+              const sowId = `SOW#${Date.now()}`;
+              
+              // Save SoW to DynamoDB
+              await dynamodb.put({
+                TableName: process.env.DYNAMODB_TABLE,
+                Item: {
+                  PK: sowId,
+                  SK: 'METADATA',
+                  id: sowId.replace('SOW#', ''),
+                  projectId: projectId,
+                  content: sowContent,
+                  status: 'draft',
+                  generatedAt: new Date().toISOString(),
+                  version: 1
+                }
+              }).promise();
+              
+              return {
+                statusCode: 200,
+                body: JSON.stringify({
+                  sowId: sowId,
+                  content: sowContent,
+                  status: 'generated'
+                })
+              };
+            } catch (error) {
+              console.error('Error generating SoW:', error);
+              throw error;
+            }
+          };
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Sub '${Environment}-uk-home-improvement'
+      Timeout: 300
+      MemorySize: 1024
+      VpcConfig:
+        SecurityGroupIds:
+          - !Ref LambdaSecurityGroup
+        SubnetIds:
+          - !ImportValue
+            Fn::Sub: '${Environment}-PrivateSubnet1-ID'
+          - !ImportValue
+            Fn::Sub: '${Environment}-PrivateSubnet2-ID'
+
+  # Notification Lambda
+  NotificationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-notification-service'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Code:
+        ZipFile: |
+          const AWS = require('aws-sdk');
+          const ses = new AWS.SES();
+          const sns = new AWS.SNS();
+          
+          exports.handler = async (event) => {
+            console.log('Notification event:', JSON.stringify(event, null, 2));
+            
+            try {
+              const { type, recipient, subject, message, phoneNumber } = event;
+              
+              if (type === 'email') {
+                const emailParams = {
+                  Source: process.env.FROM_EMAIL,
+                  Destination: {
+                    ToAddresses: [recipient]
+                  },
+                  Message: {
+                    Subject: {
+                      Data: subject
+                    },
+                    Body: {
+                      Html: {
+                        Data: message
+                      }
+                    }
+                  }
+                };
+                
+                await ses.sendEmail(emailParams).promise();
+              } else if (type === 'sms' && phoneNumber) {
+                const smsParams = {
+                  Message: message,
+                  PhoneNumber: phoneNumber
+                };
+                
+                await sns.publish(smsParams).promise();
+              }
+              
+              return {
+                statusCode: 200,
+                body: JSON.stringify({
+                  status: 'sent',
+                  type: type
+                })
+              };
+            } catch (error) {
+              console.error('Error sending notification:', error);
+              throw error;
+            }
+          };
+      Environment:
+        Variables:
+          FROM_EMAIL: !Sub 'noreply@${Environment}.uk-home-improvement.com'
+      Timeout: 60
+      MemorySize: 256
+
+  # Lambda Security Group
+  LambdaSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for Lambda functions
+      VpcId: !ImportValue
+        Fn::Sub: '${Environment}-VPC-ID'
+      SecurityGroupEgress:
+        - IpProtocol: -1
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-lambda-sg'
+
+  # Auto Scaling for Lambda (Provisioned Concurrency)
+  DocumentProcessingProvisionedConcurrency:
+    Type: AWS::Lambda::ProvisionedConcurrencyConfig
+    Properties:
+      FunctionName: !Ref DocumentProcessingFunction
+      Qualifier: $LATEST
+      ProvisionedConcurrencyCount: 2
+
+  SoWGenerationProvisionedConcurrency:
+    Type: AWS::Lambda::ProvisionedConcurrencyConfig
+    Properties:
+      FunctionName: !Ref SoWGenerationFunction
+      Qualifier: $LATEST
+      ProvisionedConcurrencyCount: 1
+
+  # Lambda Auto Scaling Target
+  DocumentProcessingScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      ServiceNamespace: lambda
+      ResourceId: !Sub 'function:${DocumentProcessingFunction}:provisioned'
+      ScalableDimension: lambda:provisioned-concurrency:utilization
+      MinCapacity: 1
+      MaxCapacity: 10
+      RoleARN: !Sub 'arn:aws:iam::${AWS::AccountId}:role/application-autoscaling-lambda-role'
+
+  # Lambda Auto Scaling Policy
+  DocumentProcessingScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub '${Environment}-document-processing-scaling-policy'
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref DocumentProcessingScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: LambdaProvisionedConcurrencyUtilization
+
+Outputs:
+  DocumentProcessingFunctionArn:
+    Description: Document Processing Lambda Function ARN
+    Value: !GetAtt DocumentProcessingFunction.Arn
+    Export:
+      Name: !Sub '${Environment}-DocumentProcessing-Function-Arn'
+
+  SoWGenerationFunctionArn:
+    Description: SoW Generation Lambda Function ARN
+    Value: !GetAtt SoWGenerationFunction.Arn
+    Export:
+      Name: !Sub '${Environment}-SoWGeneration-Function-Arn'
+
+  NotificationFunctionArn:
+    Description: Notification Lambda Function ARN
+    Value: !GetAtt NotificationFunction.Arn
+    Export:
+      Name: !Sub '${Environment}-Notification-Function-Arn'

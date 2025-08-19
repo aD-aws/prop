@@ -1,0 +1,243 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'UK Home Improvement Platform - AWS X-Ray Distributed Tracing'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [staging, production]
+    Description: Environment name
+
+Resources:
+  # X-Ray Service Map
+  XRayServiceMap:
+    Type: AWS::XRay::SamplingRule
+    Properties:
+      SamplingRule:
+        RuleName: !Sub '${Environment}-uk-home-improvement-sampling'
+        Priority: 9000
+        FixedRate: 0.1
+        ReservoirSize: 1
+        ServiceName: '*'
+        ServiceType: '*'
+        Host: '*'
+        HTTPMethod: '*'
+        URLPath: '*'
+        Version: 1
+
+  # High Priority Sampling for Critical Paths
+  CriticalPathSamplingRule:
+    Type: AWS::XRay::SamplingRule
+    Properties:
+      SamplingRule:
+        RuleName: !Sub '${Environment}-critical-path-sampling'
+        Priority: 1000
+        FixedRate: 0.5
+        ReservoirSize: 2
+        ServiceName: '*'
+        ServiceType: '*'
+        Host: '*'
+        HTTPMethod: 'POST'
+        URLPath: '/api/sow/generate'
+        Version: 1
+
+  # Document Processing Sampling
+  DocumentProcessingSamplingRule:
+    Type: AWS::XRay::SamplingRule
+    Properties:
+      SamplingRule:
+        RuleName: !Sub '${Environment}-document-processing-sampling'
+        Priority: 2000
+        FixedRate: 0.3
+        ReservoirSize: 1
+        ServiceName: '*'
+        ServiceType: '*'
+        Host: '*'
+        HTTPMethod: 'POST'
+        URLPath: '/api/projects/*/documents'
+        Version: 1
+
+  # Error Sampling (100% for errors)
+  ErrorSamplingRule:
+    Type: AWS::XRay::SamplingRule
+    Properties:
+      SamplingRule:
+        RuleName: !Sub '${Environment}-error-sampling'
+        Priority: 500
+        FixedRate: 1.0
+        ReservoirSize: 1
+        ServiceName: '*'
+        ServiceType: '*'
+        Host: '*'
+        HTTPMethod: '*'
+        URLPath: '*'
+        Version: 1
+        Attributes:
+          error: 'true'
+
+  # X-Ray Insights Configuration
+  XRayInsightsConfiguration:
+    Type: AWS::XRay::Group
+    Properties:
+      GroupName: !Sub '${Environment}-uk-home-improvement-insights'
+      FilterExpression: 'service("uk-home-improvement-backend") OR service("uk-home-improvement-frontend")'
+      InsightsConfiguration:
+        InsightsEnabled: true
+        NotificationsEnabled: true
+
+  # Performance Monitoring Group
+  PerformanceGroup:
+    Type: AWS::XRay::Group
+    Properties:
+      GroupName: !Sub '${Environment}-performance-monitoring'
+      FilterExpression: 'responsetime > 2'
+
+  # Error Monitoring Group
+  ErrorGroup:
+    Type: AWS::XRay::Group
+    Properties:
+      GroupName: !Sub '${Environment}-error-monitoring'
+      FilterExpression: 'error = true OR fault = true'
+
+  # Bedrock Integration Group
+  BedrockGroup:
+    Type: AWS::XRay::Group
+    Properties:
+      GroupName: !Sub '${Environment}-bedrock-integration'
+      FilterExpression: 'service("bedrock") OR annotation.bedrock_model EXISTS'
+
+  # CloudWatch Alarms for X-Ray Metrics
+  HighLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-XRay-High-Latency'
+      AlarmDescription: 'High latency detected in application traces'
+      MetricName: ResponseTimeHigh
+      Namespace: AWS/X-Ray
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5.0
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: GroupName
+          Value: !Ref PerformanceGroup
+      AlarmActions:
+        - !ImportValue
+          Fn::Sub: '${Environment}-Alerts-Topic-Arn'
+
+  ErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-XRay-High-Error-Rate'
+      AlarmDescription: 'High error rate detected in application traces'
+      MetricName: ErrorRate
+      Namespace: AWS/X-Ray
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 0.05
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: GroupName
+          Value: !Ref ErrorGroup
+      AlarmActions:
+        - !ImportValue
+          Fn::Sub: '${Environment}-Alerts-Topic-Arn'
+
+  # X-Ray Dashboard
+  XRayDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${Environment}-xray-dashboard'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/X-Ray", "ResponseTimeHigh", "GroupName", "${XRayInsightsConfiguration}" ],
+                  [ ".", "ResponseTimeRoot", ".", "." ],
+                  [ ".", "TracesReceived", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "X-Ray Service Performance",
+                "period": 300
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/X-Ray", "ErrorRate", "GroupName", "${ErrorGroup}" ],
+                  [ ".", "FaultRate", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "X-Ray Error and Fault Rates",
+                "period": 300
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 12,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/X-Ray", "ResponseTimeHigh", "GroupName", "${BedrockGroup}" ],
+                  [ ".", "TracesReceived", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Bedrock Integration Performance",
+                "period": 300
+              }
+            }
+          ]
+        }
+
+Outputs:
+  XRayInsightsGroupName:
+    Description: X-Ray Insights Group Name
+    Value: !Ref XRayInsightsConfiguration
+    Export:
+      Name: !Sub '${Environment}-XRay-Insights-Group'
+
+  PerformanceGroupName:
+    Description: Performance Monitoring Group Name
+    Value: !Ref PerformanceGroup
+    Export:
+      Name: !Sub '${Environment}-XRay-Performance-Group'
+
+  ErrorGroupName:
+    Description: Error Monitoring Group Name
+    Value: !Ref ErrorGroup
+    Export:
+      Name: !Sub '${Environment}-XRay-Error-Group'
+
+  XRayDashboardURL:
+    Description: X-Ray Dashboard URL
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${Environment}-xray-dashboard'
+    Export:
+      Name: !Sub '${Environment}-XRay-Dashboard-URL'
+
+  XRayServiceMapURL:
+    Description: X-Ray Service Map URL
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/xray/home?region=${AWS::Region}#/service-map'
+    Export:
+      Name: !Sub '${Environment}-XRay-ServiceMap-URL'

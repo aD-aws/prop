@@ -1,0 +1,373 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'UK Home Improvement Platform - Simple EC2 Deployment'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [staging, production]
+    Description: Environment name
+
+  KeyPairName:
+    Type: String
+    Description: EC2 Key Pair for SSH access
+    Default: ''
+
+Resources:
+  # VPC
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: '10.0.0.0/16'
+      EnableDnsHostnames: true
+      EnableDnsSupport: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-uk-home-vpc'
+
+  # Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-igw'
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Public Subnet
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: '10.0.1.0/24'
+      AvailabilityZone: !Select [0, !GetAZs '']
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-public-subnet'
+
+  # Route Table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-public-rt'
+
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: '0.0.0.0/0'
+      GatewayId: !Ref InternetGateway
+
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # Security Group
+  WebServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Security group for web server
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 3000
+          ToPort: 3000
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+
+  # IAM Role for EC2
+  EC2Role:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/CloudWatchAgentServerPolicy
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !GetAtt MainTable.Arn
+
+  EC2InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref EC2Role
+
+  # DynamoDB Table
+  MainTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${Environment}-uk-home-app'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # EC2 Instance
+  WebServerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: ami-0c02fb55956c7d316  # Amazon Linux 2 AMI
+      InstanceType: t3.micro
+      KeyName: !If [HasKeyPair, !Ref KeyPairName, !Ref 'AWS::NoValue']
+      IamInstanceProfile: !Ref EC2InstanceProfile
+      SecurityGroupIds:
+        - !Ref WebServerSecurityGroup
+      SubnetId: !Ref PublicSubnet
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          yum update -y
+          
+          # Install Node.js
+          curl -fsSL https://rpm.nodesource.com/setup_18.x | bash -
+          yum install -y nodejs git
+          
+          # Install Docker
+          yum install -y docker
+          systemctl start docker
+          systemctl enable docker
+          usermod -a -G docker ec2-user
+          
+          # Install nginx for reverse proxy
+          yum install -y nginx
+          
+          # Create nginx config
+          cat > /etc/nginx/nginx.conf << 'EOF'
+          user nginx;
+          worker_processes auto;
+          error_log /var/log/nginx/error.log;
+          pid /run/nginx.pid;
+          
+          events {
+              worker_connections 1024;
+          }
+          
+          http {
+              log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                              '$status $body_bytes_sent "$http_referer" '
+                              '"$http_user_agent" "$http_x_forwarded_for"';
+          
+              access_log /var/log/nginx/access.log main;
+          
+              sendfile on;
+              tcp_nopush on;
+              tcp_nodelay on;
+              keepalive_timeout 65;
+              types_hash_max_size 2048;
+          
+              include /etc/nginx/mime.types;
+              default_type application/octet-stream;
+          
+              server {
+                  listen 80;
+                  server_name _;
+          
+                  location / {
+                      proxy_pass http://localhost:3000;
+                      proxy_http_version 1.1;
+                      proxy_set_header Upgrade $http_upgrade;
+                      proxy_set_header Connection 'upgrade';
+                      proxy_set_header Host $host;
+                      proxy_set_header X-Real-IP $remote_addr;
+                      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+                      proxy_set_header X-Forwarded-Proto $scheme;
+                      proxy_cache_bypass $http_upgrade;
+                  }
+              }
+          }
+          EOF
+          
+          # Start nginx
+          systemctl start nginx
+          systemctl enable nginx
+          
+          # Create app directory
+          mkdir -p /opt/uk-home-app
+          cd /opt/uk-home-app
+          
+          # Create a simple Node.js app
+          cat > package.json << 'EOF'
+          {
+            "name": "uk-home-improvement-simple",
+            "version": "1.0.0",
+            "main": "server.js",
+            "scripts": {
+              "start": "node server.js"
+            },
+            "dependencies": {
+              "express": "^4.18.2",
+              "cors": "^2.8.5"
+            }
+          }
+          EOF
+          
+          # Create simple server
+          cat > server.js << 'EOF'
+          const express = require('express');
+          const cors = require('cors');
+          
+          const app = express();
+          const PORT = 3000;
+          
+          app.use(cors());
+          app.use(express.json());
+          
+          app.get('/api/health', (req, res) => {
+            res.json({
+              success: true,
+              message: 'UK Home Improvement Platform is running on AWS!',
+              timestamp: new Date().toISOString(),
+              environment: '${Environment}'
+            });
+          });
+          
+          app.get('/', (req, res) => {
+            res.json({
+              message: 'Welcome to UK Home Improvement Platform!',
+              status: 'Running on AWS EC2',
+              environment: '${Environment}',
+              endpoints: {
+                health: '/api/health',
+                projects: '/api/projects'
+              }
+            });
+          });
+          
+          app.get('/api/projects', (req, res) => {
+            res.json({
+              success: true,
+              data: [
+                {
+                  id: '1',
+                  name: 'Kitchen Extension',
+                  type: 'extension',
+                  status: 'planning',
+                  address: '123 Main Street, London, SW1A 1AA',
+                  createdAt: '2024-01-15T10:00:00Z',
+                  estimatedCost: 25000
+                }
+              ]
+            });
+          });
+          
+          app.listen(PORT, () => {
+            console.log(`🚀 UK Home Improvement Platform running on port ${PORT}`);
+            console.log(`📊 Health check: http://localhost:${PORT}/api/health`);
+            console.log(`🌍 Environment: ${Environment}`);
+          });
+          EOF
+          
+          # Install dependencies and start app
+          npm install
+          
+          # Create systemd service
+          cat > /etc/systemd/system/uk-home-app.service << 'EOF'
+          [Unit]
+          Description=UK Home Improvement Platform
+          After=network.target
+          
+          [Service]
+          Type=simple
+          User=ec2-user
+          WorkingDirectory=/opt/uk-home-app
+          ExecStart=/usr/bin/node server.js
+          Restart=always
+          RestartSec=10
+          Environment=NODE_ENV=${Environment}
+          Environment=DYNAMODB_TABLE_NAME=${Environment}-uk-home-app
+          
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          
+          # Start the service
+          systemctl daemon-reload
+          systemctl start uk-home-app
+          systemctl enable uk-home-app
+          
+          # Signal completion
+          /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource WebServerInstance --region ${AWS::Region}
+      Tags:
+        - Key: Name
+          Value: !Sub '${Environment}-uk-home-server'
+    CreationPolicy:
+      ResourceSignal:
+        Timeout: PT10M
+
+Conditions:
+  HasKeyPair: !Not [!Equals [!Ref KeyPairName, '']]
+
+Outputs:
+  WebsiteURL:
+    Description: Website URL
+    Value: !Sub 'http://${WebServerInstance.PublicDnsName}'
+    Export:
+      Name: !Sub '${Environment}-Website-URL'
+
+  PublicIP:
+    Description: Public IP Address
+    Value: !GetAtt WebServerInstance.PublicIp
+    Export:
+      Name: !Sub '${Environment}-Public-IP'
+
+  HealthCheckURL:
+    Description: Health Check URL
+    Value: !Sub 'http://${WebServerInstance.PublicDnsName}/api/health'
+    Export:
+      Name: !Sub '${Environment}-Health-Check-URL'
+
+  DynamoDBTable:
+    Description: DynamoDB Table Name
+    Value: !Ref MainTable
+    Export:
+      Name: !Sub '${Environment}-DynamoDB-Table'

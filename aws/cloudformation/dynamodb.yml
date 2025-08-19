@@ -1,0 +1,283 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'UK Home Improvement Platform - DynamoDB Tables and Backup'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [staging, production]
+    Description: Environment name
+
+Resources:
+  # Main DynamoDB Table (Single Table Design)
+  MainTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${Environment}-uk-home-improvement'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+        - AttributeName: GSI1PK
+          AttributeType: S
+        - AttributeName: GSI1SK
+          AttributeType: S
+        - AttributeName: GSI2PK
+          AttributeType: S
+        - AttributeName: GSI2SK
+          AttributeType: S
+        - AttributeName: GSI3PK
+          AttributeType: S
+        - AttributeName: GSI3SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1
+          KeySchema:
+            - AttributeName: GSI1PK
+              KeyType: HASH
+            - AttributeName: GSI1SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: GSI2
+          KeySchema:
+            - AttributeName: GSI2PK
+              KeyType: HASH
+            - AttributeName: GSI2SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: GSI3
+          KeySchema:
+            - AttributeName: GSI3PK
+              KeyType: HASH
+            - AttributeName: GSI3SK
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      StreamSpecification:
+        StreamViewType: NEW_AND_OLD_IMAGES
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+      DeletionProtectionEnabled: !If [IsProduction, true, false]
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+        - Key: BackupRequired
+          Value: 'true'
+
+  # DynamoDB Backup Vault
+  BackupVault:
+    Type: AWS::Backup::BackupVault
+    Properties:
+      BackupVaultName: !Sub '${Environment}-dynamodb-backup-vault'
+      EncryptionKeyArn: !GetAtt BackupKMSKey.Arn
+      BackupVaultTags:
+        Environment: !Ref Environment
+
+  # KMS Key for Backup Encryption
+  BackupKMSKey:
+    Type: AWS::KMS::Key
+    Properties:
+      Description: !Sub 'KMS Key for ${Environment} DynamoDB backups'
+      KeyPolicy:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: Enable IAM User Permissions
+            Effect: Allow
+            Principal:
+              AWS: !Sub 'arn:aws:iam::${AWS::AccountId}:root'
+            Action: 'kms:*'
+            Resource: '*'
+          - Sid: Allow AWS Backup
+            Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action:
+              - kms:Decrypt
+              - kms:GenerateDataKey
+              - kms:CreateGrant
+            Resource: '*'
+
+  BackupKMSKeyAlias:
+    Type: AWS::KMS::Alias
+    Properties:
+      AliasName: !Sub 'alias/${Environment}-dynamodb-backup-key'
+      TargetKeyId: !Ref BackupKMSKey
+
+  # Backup Plan
+  BackupPlan:
+    Type: AWS::Backup::BackupPlan
+    Properties:
+      BackupPlan:
+        BackupPlanName: !Sub '${Environment}-dynamodb-backup-plan'
+        BackupPlanRule:
+          - RuleName: DailyBackups
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: cron(0 2 * * ? *)
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 120
+            Lifecycle:
+              DeleteAfterDays: 30
+              MoveToColdStorageAfterDays: 7
+          - RuleName: WeeklyBackups
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: cron(0 3 ? * SUN *)
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 120
+            Lifecycle:
+              DeleteAfterDays: 90
+              MoveToColdStorageAfterDays: 30
+          - RuleName: MonthlyBackups
+            TargetBackupVault: !Ref BackupVault
+            ScheduleExpression: cron(0 4 1 * ? *)
+            StartWindowMinutes: 60
+            CompletionWindowMinutes: 120
+            Lifecycle:
+              DeleteAfterDays: 365
+              MoveToColdStorageAfterDays: 90
+
+  # Backup Service Role
+  BackupServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: backup.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForBackup
+        - arn:aws:iam::aws:policy/service-role/AWSBackupServiceRolePolicyForRestores
+
+  # Backup Selection
+  BackupSelection:
+    Type: AWS::Backup::BackupSelection
+    Properties:
+      BackupPlanId: !Ref BackupPlan
+      BackupSelection:
+        SelectionName: !Sub '${Environment}-dynamodb-selection'
+        IamRoleArn: !GetAtt BackupServiceRole.Arn
+        Resources:
+          - !GetAtt MainTable.Arn
+        Conditions:
+          StringEquals:
+            'aws:ResourceTag/BackupRequired': 'true'
+
+  # DynamoDB Auto Scaling Role
+  DynamoDBAutoScalingRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: application-autoscaling.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/DynamoDBAutoscaleRole
+
+  # Auto Scaling Targets for Read Capacity
+  ReadCapacityScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      ServiceNamespace: dynamodb
+      ResourceId: !Sub 'table/${MainTable}'
+      ScalableDimension: dynamodb:table:ReadCapacityUnits
+      MinCapacity: 5
+      MaxCapacity: 1000
+      RoleARN: !GetAtt DynamoDBAutoScalingRole.Arn
+
+  # Auto Scaling Targets for Write Capacity
+  WriteCapacityScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      ServiceNamespace: dynamodb
+      ResourceId: !Sub 'table/${MainTable}'
+      ScalableDimension: dynamodb:table:WriteCapacityUnits
+      MinCapacity: 5
+      MaxCapacity: 1000
+      RoleARN: !GetAtt DynamoDBAutoScalingRole.Arn
+
+  # Auto Scaling Policy for Read Capacity
+  ReadCapacityScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub '${Environment}-read-capacity-scaling-policy'
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref ReadCapacityScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBReadCapacityUtilization
+
+  # Auto Scaling Policy for Write Capacity
+  WriteCapacityScalingPolicy:
+    Type: AWS::ApplicationAutoScaling::ScalingPolicy
+    Properties:
+      PolicyName: !Sub '${Environment}-write-capacity-scaling-policy'
+      PolicyType: TargetTrackingScaling
+      ScalingTargetId: !Ref WriteCapacityScalableTarget
+      TargetTrackingScalingPolicyConfiguration:
+        TargetValue: 70.0
+        PredefinedMetricSpecification:
+          PredefinedMetricType: DynamoDBWriteCapacityUtilization
+
+  # GSI Auto Scaling Targets
+  GSI1ReadCapacityScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      ServiceNamespace: dynamodb
+      ResourceId: !Sub 'table/${MainTable}/index/GSI1'
+      ScalableDimension: dynamodb:index:ReadCapacityUnits
+      MinCapacity: 5
+      MaxCapacity: 1000
+      RoleARN: !GetAtt DynamoDBAutoScalingRole.Arn
+
+  GSI1WriteCapacityScalableTarget:
+    Type: AWS::ApplicationAutoScaling::ScalableTarget
+    Properties:
+      ServiceNamespace: dynamodb
+      ResourceId: !Sub 'table/${MainTable}/index/GSI1'
+      ScalableDimension: dynamodb:index:WriteCapacityUnits
+      MinCapacity: 5
+      MaxCapacity: 1000
+      RoleARN: !GetAtt DynamoDBAutoScalingRole.Arn
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, production]
+
+Outputs:
+  MainTableName:
+    Description: Main DynamoDB Table Name
+    Value: !Ref MainTable
+    Export:
+      Name: !Sub '${Environment}-DynamoDB-Table'
+
+  MainTableArn:
+    Description: Main DynamoDB Table ARN
+    Value: !GetAtt MainTable.Arn
+    Export:
+      Name: !Sub '${Environment}-DynamoDB-Table-Arn'
+
+  MainTableStreamArn:
+    Description: Main DynamoDB Table Stream ARN
+    Value: !GetAtt MainTable.StreamArn
+    Export:
+      Name: !Sub '${Environment}-DynamoDB-Stream-Arn'
+
+  BackupVaultArn:
+    Description: Backup Vault ARN
+    Value: !GetAtt BackupVault.BackupVaultArn
+    Export:
+      Name: !Sub '${Environment}-Backup-Vault-Arn'

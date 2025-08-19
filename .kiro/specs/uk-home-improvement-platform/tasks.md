@@ -1,0 +1,172 @@
+# Implementation Plan
+
+- [x] 1. Set up project foundation and core AWS infrastructure
+  - Initialize Node.js/TypeScript backend with Express.js framework
+  - Set up DynamoDB with single-table design and Global Secondary Indexes
+  - Configure Redis for caching and session management
+  - Set up AWS Lambda functions for serverless microservices
+  - Configure AWS API Gateway for API management
+  - Set up AWS Bedrock access with Claude 3.5 Sonnet and Titan models
+  - Configure AWS SDK for DynamoDB, S3, Textract, and Bedrock operations
+  - Create AWS IAM roles and policies for service access
+  - _Requirements: 8.1, 8.2, 8.3, 8.4_
+
+- [x] 2. Implement user management and authentication system
+  - Create User and UserProfile data models with DynamoDB single-table design
+  - Implement DynamoDB operations for user CRUD with proper PK/SK structure
+  - Implement user registration, login, and profile management APIs
+  - Add role-based access control for homeowners, builders, and admins
+  - Implement GDPR compliance features including data export and deletion
+  - Create JWT-based authentication with refresh token mechanism
+  - Write unit tests for authentication and user management services
+  - _Requirements: 8.1, 8.2, 8.3, 8.4_
+
+- [x] 3. Build property address validation and council data integration
+  - Implement UK postcode validation using external postcode API
+  - Create council data integration service with web scraping capabilities
+  - Build conservation area and listed building status checking functionality
+  - Implement caching mechanism for council data to reduce external API calls
+  - Create fallback mechanisms for when council websites are unavailable
+  - Write integration tests for address validation and council data retrieval
+  - _Requirements: 1.2, 1.3, 6.1, 6.3_
+
+- [x] 4. Create project management system with guided user journey
+  - Implement Project data model with DynamoDB single-table design and GSI for status filtering
+  - Create project creation API with step-by-step guided forms
+  - Build project type selection with educational content for each type
+  - Implement progress tracking and user journey state management
+  - Create project dashboard showing current status and next steps
+  - Add tooltips, examples, and plain English explanations throughout
+  - Write unit tests for project management service and user journey logic
+  - _Requirements: 1.1, 1.4, 1.5, 1.6, 1.7, 7.1, 7.2, 7.3, 7.4, 7.5_
+
+- [x] 5. Implement document upload and AI-powered processing system
+  - Create secure file upload API with encryption for transmission and storage to S3
+  - Implement document processing service using AWS Textract for OCR
+  - Integrate AWS Bedrock (Claude 3.5 Sonnet) for intelligent document analysis
+  - Build AI-powered document classification for structural drawings and calculations
+  - Create document metadata extraction using Bedrock for technical specification extraction
+  - Implement file versioning and audit trail capabilities
+  - Add support for common file formats (PDF, DWG, JPG, PNG)
+  - Write integration tests for document upload and AI processing workflows
+  - _Requirements: 1.6, 8.1, 8.2_
+
+- [x] 6. Build AI-powered compliance checking and industry standards validation
+  - Implement compliance checking service using AWS Bedrock for intelligent regulation analysis
+  - Create custom prompts for RICS professional standards validation
+  - Build RIBA Plan of Work stage structuring and validation using AI
+  - Implement NHBC standards checking for residential projects with Bedrock
+  - Create AI-powered compliance scoring with natural language explanations
+  - Add automated flagging for Building Control approval requirements
+  - Build knowledge base with UK building regulations for RAG implementation
+  - Write unit tests for all compliance checking rules and AI validation logic
+  - _Requirements: 6.2, 6.4, 6.5, 6.6, 6.7_
+
+- [x] 7. Implement cost estimation system using NRM1/NRM2 standards
+  - Create cost estimation service following NRM1 order of cost estimating
+  - Implement NRM2 detailed measurement and pricing calculations
+  - Build integration with UK construction cost databases and material pricing APIs
+  - Create cost breakdown structure following industry standards
+  - Implement confidence scoring for cost estimates based on data quality
+  - Add automatic cost updates based on market rate changes
+  - Write unit tests for cost calculation algorithms and NRM compliance
+  - _Requirements: 2.4, 2.5, 2.7_
+
+- [x] 8. Create AI-powered Scope of Work generation engine
+  - Implement SoW data model with DynamoDB structure for RIBA stages, specifications, and materials
+  - Build SoW generation service using AWS Bedrock (Claude 3.5 Sonnet) for intelligent content creation
+  - Create custom prompts for different project types (loft conversion, extension, etc.) following UK standards
+  - Implement AI-powered detailed specifications generation with no ambiguity requirements
+  - Build materials list generation with UK supplier integration using Bedrock recommendations
+  - Add work phases and deliverables structuring following RIBA methodology with AI assistance
+  - Create SoW validation and approval workflow with AI-powered quality checks
+  - Write integration tests for complete AI-powered SoW generation process
+  - _Requirements: 2.1, 2.2, 2.3, 2.4, 2.5, 2.6, 2.7_
+
+- [x] 9. Build quote management system for builders
+  - Create Quote data model with DynamoDB structure using SoW as PK and Quote as SK
+  - Implement GSI for builder quote lookups and status filtering
+  - Implement SoW distribution system to send projects to selected builders
+  - Build builder interface for reviewing SoWs with industry-standard formatting
+  - Create quote submission API with itemized pricing following NRM2 standards
+  - Implement quote comparison tools highlighting differences in approach and compliance
+  - Add builder communication system for clarification questions
+  - Write unit tests for quote management workflows and comparison algorithms
+  - _Requirements: 3.1, 3.2, 3.3, 3.4, 5.1, 5.2, 5.3, 5.4, 5.5, 5.6_
+
+- [x] 10. Implement contract generation and digital signing
+  - Create Contract data model with DynamoDB structure for terms, signatures, and status tracking
+  - Build contract generation service incorporating SoW and selected quote details
+  - Implement UK construction contract terms and consumer protection law compliance
+  - Create digital signature integration with legal validity
+  - Build contract version management and audit trail functionality
+  - Add contract status tracking and milestone management
+  - Write integration tests for contract generation and signing workflows
+  - _Requirements: 4.1, 4.2, 4.3, 4.4_
+
+- [x] 11. Create notification and communication system
+  - Implement notification service for email and in-app notifications
+  - Build automated notifications for project milestones and status changes
+  - Create communication channels between homeowners and builders
+  - Implement notification preferences and GDPR-compliant opt-out mechanisms
+  - Add real-time updates using WebSocket connections
+  - Create notification templates for different user types and scenarios
+  - Write unit tests for notification delivery and communication workflows
+  - _Requirements: 3.4, 5.6, 7.4_
+
+- [x] 12. Build React frontend with AI-powered guided user experience
+  - Create React.js application with TypeScript and Material-UI components
+  - Implement responsive design for desktop and mobile devices
+  - Build guided onboarding process explaining platform benefits
+  - Create step-by-step project creation forms with progress indicators
+  - Implement AI-powered educational content display with tooltips and examples using Bedrock
+  - Build project dashboard with status tracking and next steps
+  - Add real-time AI assistance chat feature for user guidance
+  - Implement AI-powered plain English explanations of technical terms
+  - Add accessibility features following WCAG 2.1 guidelines
+  - Write component tests and end-to-end user journey tests
+  - _Requirements: 1.1, 1.4, 1.5, 7.1, 7.2, 7.3, 7.4, 7.5_
+
+- [x] 13. Create builder interface and quote management frontend
+  - Build builder-specific dashboard showing available SoW opportunities
+  - Create SoW review interface with industry-standard document formatting
+  - Implement quote submission forms following NRM2 measurement standards
+  - Build quote management dashboard for tracking submitted quotes
+  - Add communication interface for asking clarification questions
+  - Create builder profile management with certifications and insurance details
+  - Write integration tests for builder workflows and quote submission process
+  - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5, 5.6_
+
+- [x] 14. Implement comprehensive testing and quality assurance
+  - Create automated test suite covering all API endpoints and business logic
+  - Implement integration tests for external service dependencies
+  - Build performance tests for document processing and concurrent user scenarios
+  - Create security tests for authentication, authorization, and data encryption
+  - Implement compliance tests validating industry standards adherence
+  - Add accessibility tests ensuring WCAG 2.1 compliance
+  - Create user acceptance tests covering complete user journeys
+  - Set up continuous integration pipeline with automated testing
+  - _Requirements: All requirements validation_
+
+- [x] 15. Set up AWS production deployment and monitoring
+  - Configure AWS infrastructure with ECS/Fargate for container orchestration
+  - Set up AWS Lambda functions for serverless microservices
+  - Implement DynamoDB backup strategies and point-in-time recovery
+  - Set up AWS CloudWatch monitoring and logging for system health and performance
+  - Create AWS CloudWatch alarms and SNS notifications for error tracking
+  - Implement AWS WAF for security monitoring and intrusion detection
+  - Configure AWS Auto Scaling for Lambda and ECS based on user load
+  - Set up AWS Bedrock usage monitoring and cost optimization
+  - Create AWS CodePipeline deployment pipeline with staging and production environments
+  - Implement AWS X-Ray for distributed tracing and performance monitoring
+  - _Requirements: 8.1, 8.2, 8.3, 8.4_
+
+- [x] 16. Fix project storage and dashboard display issue
+  - Investigate why new projects are not being stored in DynamoDB
+  - Verify AWS Lambda functions are properly connected to production DynamoDB table
+  - Replace any mock/dummy data responses with actual database operations
+  - Ensure frontend API calls are properly authenticated and routed to correct endpoints
+  - Test project creation, retrieval, and dashboard display functionality end-to-end
+  - Verify DynamoDB table structure and GSI configurations match the data model
+  - Update environment variables and configuration for proper AWS service connectivity
+  - _Requirements: 1.1, 1.4, 1.5, 1.6, 1.7_

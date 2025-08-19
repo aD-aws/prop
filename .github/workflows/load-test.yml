@@ -1,0 +1,138 @@
+config:
+  target: 'http://localhost:3001'
+  phases:
+    - duration: 60
+      arrivalRate: 5
+      name: "Warm up"
+    - duration: 120
+      arrivalRate: 10
+      name: "Ramp up load"
+    - duration: 300
+      arrivalRate: 20
+      name: "Sustained load"
+  defaults:
+    headers:
+      Content-Type: 'application/json'
+  processor: "./load-test-processor.js"
+
+scenarios:
+  - name: "User Registration and Login"
+    weight: 20
+    flow:
+      - post:
+          url: "/api/auth/register"
+          json:
+            email: "loadtest{{ $randomString() }}@example.com"
+            password: "LoadTest123!"
+            userType: "homeowner"
+            profile:
+              firstName: "Load"
+              lastName: "Test"
+          capture:
+            - json: "$.token"
+              as: "authToken"
+      - post:
+          url: "/api/auth/login"
+          json:
+            email: "loadtest{{ $randomString() }}@example.com"
+            password: "LoadTest123!"
+          capture:
+            - json: "$.token"
+              as: "loginToken"
+
+  - name: "Project Creation Flow"
+    weight: 30
+    flow:
+      - function: "generateAuthToken"
+      - post:
+          url: "/api/projects"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          json:
+            propertyAddress:
+              line1: "{{ $randomInt(1, 999) }} Load Test Street"
+              city: "London"
+              postcode: "SW1A 1AA"
+              country: "UK"
+            projectType: "loft_conversion"
+            requirements:
+              description: "Load test loft conversion"
+              dimensions:
+                length: "{{ $randomInt(4, 8) }}"
+                width: "{{ $randomInt(3, 6) }}"
+                height: 2.5
+              materials:
+                flooring: "engineered_wood"
+                insulation: "mineral_wool"
+              timeline:
+                startDate: "2024-04-01"
+                endDate: "2024-06-01"
+              budget:
+                min: "{{ $randomInt(15000, 20000) }}"
+                max: "{{ $randomInt(25000, 35000) }}"
+              specialRequirements: []
+          capture:
+            - json: "$.id"
+              as: "projectId"
+
+  - name: "SoW Generation"
+    weight: 25
+    flow:
+      - function: "generateAuthToken"
+      - function: "createTestProject"
+      - post:
+          url: "/api/sow/generate"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          json:
+            projectId: "{{ projectId }}"
+          capture:
+            - json: "$.id"
+              as: "sowId"
+
+  - name: "Quote Management"
+    weight: 15
+    flow:
+      - function: "generateBuilderToken"
+      - function: "createTestSoW"
+      - post:
+          url: "/api/quotes"
+          headers:
+            Authorization: "Bearer {{ builderToken }}"
+          json:
+            sowId: "{{ sowId }}"
+            totalPrice: "{{ $randomInt(20000, 40000) }}"
+            timeline: "{{ $randomInt(30, 90) }}"
+            breakdown:
+              - description: "Structural work"
+                quantity: 1
+                rate: "{{ $randomInt(8000, 12000) }}"
+              - description: "Materials"
+                quantity: "{{ $randomInt(20, 30) }}"
+                unit: "m²"
+                rate: "{{ $randomInt(100, 200) }}"
+            warranty:
+              period: 10
+              terms: "Standard warranty terms"
+            terms: "Payment on completion"
+
+  - name: "API Health Checks"
+    weight: 10
+    flow:
+      - get:
+          url: "/health"
+      - get:
+          url: "/api/health"
+      - function: "generateAuthToken"
+      - get:
+          url: "/api/users/profile"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+
+# Performance thresholds
+expect:
+  - http.response_time.p95: 2000  # 95% of requests under 2 seconds
+  - http.response_time.p99: 5000  # 99% of requests under 5 seconds
+  - http.codes.200: 95            # 95% success rate
+  - http.codes.4xx: 5             # Max 5% client errors
+  - http.codes.5xx: 1             # Max 1% server errors

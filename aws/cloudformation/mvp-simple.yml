@@ -1,0 +1,943 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'UK Home Improvement Platform - MVP Deployment'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [staging, production]
+    Description: Environment name
+
+Resources:
+  # Simple DynamoDB Table (Pay per request - no provisioning needed)
+  MainTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      TableName: !Sub '${Environment}-uk-home-mvp'
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: PK
+          AttributeType: S
+        - AttributeName: SK
+          AttributeType: S
+      KeySchema:
+        - AttributeName: PK
+          KeyType: HASH
+        - AttributeName: SK
+          KeyType: RANGE
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # S3 Bucket for file storage (simple, no complex lifecycle)
+  DocumentsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${Environment}-uk-home-docs-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+      Tags:
+        - Key: Environment
+          Value: !Ref Environment
+
+  # Lambda function (simple, no auto-scaling complexity)
+  SimpleAPIFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub '${Environment}-uk-home-api'
+      Runtime: nodejs18.x
+      Handler: index.handler
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      MemorySize: 512
+      Environment:
+        Variables:
+          DYNAMODB_TABLE: !Ref MainTable
+          S3_BUCKET: !Ref DocumentsBucket
+          NODE_ENV: !Ref Environment
+      Code:
+        ZipFile: |
+          const { DynamoDBClient } = require('@aws-sdk/client-dynamodb');
+          const { DynamoDBDocumentClient, GetCommand, PutCommand, ScanCommand } = require('@aws-sdk/lib-dynamodb');
+          
+          // Simple UUID generator for Lambda
+          function uuidv4() {
+            return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+              const r = Math.random() * 16 | 0;
+              const v = c == 'x' ? r : (r & 0x3 | 0x8);
+              return v.toString(16);
+            });
+          }
+          
+          // Transform project data to frontend-compatible format
+          function transformProjectForFrontend(project) {
+            const { PK, SK, GSI2PK, GSI2SK, ...cleanProject } = project;
+            
+            // Ensure requirements structure matches frontend expectations
+            if (cleanProject.requirements) {
+              // Convert complex timeline object to simple string if needed
+              if (typeof cleanProject.requirements.timeline === 'object' && cleanProject.requirements.timeline.flexibility) {
+                cleanProject.requirements.timeline = cleanProject.requirements.timeline.flexibility;
+              }
+              
+              // Convert complex materials object to simple array if needed
+              if (typeof cleanProject.requirements.materials === 'object' && cleanProject.requirements.materials.preferences) {
+                cleanProject.requirements.materials = cleanProject.requirements.materials.preferences || [];
+              }
+            }
+            
+            // Ensure status is frontend-compatible
+            const statusMap = {
+              'draft': 'planning',
+              'requirements-gathering': 'planning',
+              'council-check': 'planning',
+              'sow-generation': 'planning',
+              'quote-collection': 'in_progress',
+              'quote-review': 'in_progress',
+              'contract-generation': 'in_progress',
+              'active': 'in_progress',
+              'completed': 'completed',
+              'cancelled': 'on_hold'
+            };
+            
+            if (statusMap[cleanProject.status]) {
+              cleanProject.status = statusMap[cleanProject.status];
+            }
+            
+            // Ensure projectType uses underscores instead of hyphens
+            if (cleanProject.projectType) {
+              cleanProject.projectType = cleanProject.projectType.replace(/-/g, '_');
+            }
+            
+            return cleanProject;
+          }
+          
+          // Generate SoW content based on project details
+          function generateSoWContent(project) {
+            let projectType = project.projectType || 'other';
+            // Convert underscore format to hyphen format for template lookup
+            if (projectType === 'loft_conversion') {
+              projectType = 'loft-conversion';
+            } else if (projectType === 'rear_extension') {
+              projectType = 'rear-extension';
+            } else if (projectType === 'side_extension') {
+              projectType = 'side-extension';
+            } else if (projectType === 'bathroom_renovation') {
+              projectType = 'bathroom-renovation';
+            } else if (projectType === 'kitchen_renovation') {
+              projectType = 'kitchen-renovation';
+            }
+            const address = project.propertyAddress || {};
+            const requirements = project.requirements || {};
+            
+            const projectTypeTemplates = {
+              'loft-conversion': {
+                title: 'Loft Conversion',
+                description: 'Convert unused loft space into a functional room',
+                stages: [
+                  'Planning and Building Regulations approval',
+                  'Structural assessment and steel beam installation',
+                  'Insulation and weatherproofing',
+                  'Electrical and plumbing installation',
+                  'Flooring and staircase installation',
+                  'Internal finishing and decoration'
+                ],
+                considerations: [
+                  'Head height must be at least 2.2m',
+                  'Fire safety regulations compliance',
+                  'Structural calculations required',
+                  'Building Control approval needed'
+                ]
+              },
+              'rear-extension': {
+                title: 'Rear Extension',
+                description: 'Extend the property backwards to create additional living space',
+                stages: [
+                  'Planning permission and Building Regulations',
+                  'Excavation and foundation work',
+                  'Steel beam and structural work',
+                  'Roof construction and weatherproofing',
+                  'Window and door installation',
+                  'Internal fit-out and finishing'
+                ],
+                considerations: [
+                  'Party wall agreements may be required',
+                  'Permitted development rights assessment',
+                  'Drainage and utilities connection',
+                  'Integration with existing structure'
+                ]
+              },
+              'side-extension': {
+                title: 'Side Extension',
+                description: 'Extend the property to the side for additional space',
+                stages: [
+                  'Planning permission application',
+                  'Foundation and structural work',
+                  'Wall construction and roofing',
+                  'Window and door installation',
+                  'Internal finishing',
+                  'External works and landscaping'
+                ],
+                considerations: [
+                  'Boundary distances compliance',
+                  'Matching materials and design',
+                  'Utilities relocation',
+                  'Garden space impact assessment'
+                ]
+              },
+              'bathroom-renovation': {
+                title: 'Bathroom Renovation',
+                description: 'Complete renovation of bathroom facilities',
+                stages: [
+                  'Design and planning',
+                  'Removal of existing fixtures',
+                  'Plumbing and electrical work',
+                  'Waterproofing and tiling',
+                  'Fixture installation',
+                  'Final finishing and decoration'
+                ],
+                considerations: [
+                  'Waterproofing requirements',
+                  'Ventilation compliance',
+                  'Electrical safety in wet areas',
+                  'Accessibility considerations'
+                ]
+              },
+              'kitchen-renovation': {
+                title: 'Kitchen Renovation',
+                description: 'Transform kitchen with new units and appliances',
+                stages: [
+                  'Design and planning',
+                  'Removal of existing kitchen',
+                  'Electrical and plumbing updates',
+                  'Kitchen unit installation',
+                  'Appliance installation',
+                  'Final finishing and decoration'
+                ],
+                considerations: [
+                  'Electrical requirements for appliances',
+                  'Plumbing for sinks and dishwashers',
+                  'Ventilation and extraction',
+                  'Work triangle efficiency'
+                ]
+              }
+            };
+            
+            const template = projectTypeTemplates[projectType] || projectTypeTemplates['rear-extension'];
+            
+            let sowContent = '# Scope of Work - ' + template.title + '\n\n';
+            sowContent += '## Project Overview\n';
+            sowContent += '**Property Address:** ' + (address.line1 || 'Not specified') + ', ' + (address.city || 'Not specified') + ', ' + (address.postcode || 'Not specified') + '\n\n';
+            sowContent += '**Project Description:** ' + (requirements.description || template.description) + '\n\n';
+            sowContent += '**Project Type:** ' + template.title + '\n\n';
+            
+            sowContent += '## Work Stages\n\n';
+            template.stages.forEach((stage, index) => {
+              sowContent += '### Stage ' + (index + 1) + ': ' + stage + '\n';
+              sowContent += '- Detailed planning and preparation\n';
+              sowContent += '- Material procurement and delivery\n';
+              sowContent += '- Professional installation and quality checks\n';
+              sowContent += '- Progress inspection and sign-off\n\n';
+            });
+            
+            sowContent += '## Key Considerations\n\n';
+            template.considerations.forEach(consideration => {
+              sowContent += '- ' + consideration + '\n';
+            });
+            
+            sowContent += '\n## Materials and Specifications\n\n';
+            if (requirements.materials && requirements.materials.length > 0) {
+              sowContent += '**Specified Materials:**\n';
+              requirements.materials.forEach(material => {
+                sowContent += '- ' + material + '\n';
+              });
+            } else {
+              sowContent += '**Materials:** To be specified based on client preferences and budget requirements\n';
+            }
+            
+            sowContent += '\n## Timeline\n\n';
+            let timelineText = requirements.timeline || '6-12 weeks depending on project complexity';
+            if (typeof timelineText === 'object') {
+              timelineText = timelineText.flexibility || '6-12 weeks depending on project complexity';
+            }
+            sowContent += '**Estimated Duration:** ' + timelineText + '\n\n';
+            sowContent += '**Project Phases:**\n';
+            sowContent += '- Planning and approvals: 2-4 weeks\n';
+            sowContent += '- Construction work: 4-8 weeks\n';
+            sowContent += '- Final finishing: 1-2 weeks\n\n';
+            
+            sowContent += '## Budget Considerations\n\n';
+            if (requirements.budget && (requirements.budget.min || requirements.budget.max)) {
+              sowContent += '**Budget Range:** £' + (requirements.budget.min || 0) + ' - £' + (requirements.budget.max || 'TBD') + '\n\n';
+            } else {
+              sowContent += '**Budget:** To be determined based on final specifications and material choices\n\n';
+            }
+            
+            sowContent += '## Compliance and Regulations\n\n';
+            sowContent += '- All work will comply with current UK Building Regulations\n';
+            sowContent += '- Necessary approvals will be obtained before commencement\n';
+            sowContent += '- Work will be carried out by qualified and insured professionals\n';
+            sowContent += '- Building Control inspections will be arranged as required\n\n';
+            
+            sowContent += '## Next Steps\n\n';
+            sowContent += '1. Review and approve this Scope of Work\n';
+            sowContent += '2. Obtain detailed quotes from approved contractors\n';
+            sowContent += '3. Finalize material selections and specifications\n';
+            sowContent += '4. Schedule work commencement\n';
+            sowContent += '5. Arrange necessary permits and approvals\n\n';
+            
+            sowContent += '---\n\n';
+            sowContent += '*This Scope of Work was generated based on your project requirements and UK building standards. Please review carefully and discuss any modifications with your chosen contractor.*\n\n';
+            sowContent += '**Generated:** ' + new Date().toLocaleDateString('en-GB') + '\n';
+            sowContent += '**Document ID:** SOW-' + Date.now();
+
+            return sowContent;
+          }
+          
+          // Initialize DynamoDB client
+          const dynamoDBClient = new DynamoDBClient({ region: process.env.AWS_REGION });
+          const dynamodb = DynamoDBDocumentClient.from(dynamoDBClient);
+          
+          exports.handler = async (event) => {
+            console.log('Event received:', JSON.stringify(event, null, 2));
+            
+            // CORS headers
+            const corsHeaders = {
+              'Access-Control-Allow-Origin': '*',
+              'Access-Control-Allow-Headers': 'Content-Type,Authorization,X-Request-ID',
+              'Access-Control-Allow-Methods': 'GET,POST,PUT,DELETE,OPTIONS'
+            };
+            
+            // Handle OPTIONS requests for CORS
+            if (event.httpMethod === 'OPTIONS') {
+              return {
+                statusCode: 200,
+                headers: corsHeaders,
+                body: ''
+              };
+            }
+            
+            try {
+              const { httpMethod, path, pathParameters, body, headers } = event;
+              const requestPath = pathParameters && pathParameters.proxy ? pathParameters.proxy : path;
+              const requestId = headers['X-Request-ID'] || uuidv4();
+              
+              let response;
+              
+              // Health check
+              if (requestPath === 'api/health') {
+                response = {
+                  success: true,
+                  data: {
+                    status: 'healthy',
+                    message: 'UK Home Improvement Platform MVP is running!',
+                    timestamp: new Date().toISOString(),
+                    version: '1.0.0',
+                    environment: process.env.NODE_ENV || 'production'
+                  },
+                  timestamp: new Date().toISOString(),
+                  requestId: requestId
+                };
+              }
+              // Get projects
+              else if (requestPath === 'api/projects' && httpMethod === 'GET') {
+                try {
+                  // Get all projects from DynamoDB
+                  const result = await dynamodb.send(new ScanCommand({
+                    TableName: process.env.DYNAMODB_TABLE,
+                    FilterExpression: 'begins_with(PK, :pk) AND SK = :sk',
+                    ExpressionAttributeValues: {
+                      ':pk': 'PROJECT#',
+                      ':sk': 'METADATA'
+                    }
+                  }));
+                  
+                  const projects = result.Items ? result.Items.map(item => {
+                    return transformProjectForFrontend(item);
+                  }) : [];
+                  
+                  response = {
+                    success: true,
+                    data: projects,
+                    timestamp: new Date().toISOString(),
+                    requestId: requestId
+                  };
+                } catch (dbError) {
+                  console.error('DynamoDB error:', dbError);
+                  response = {
+                    success: true,
+                    data: [], // Return empty array if DB fails
+                    timestamp: new Date().toISOString(),
+                    requestId: requestId
+                  };
+                }
+              }
+              // Login
+              else if (requestPath === 'api/auth/login' && httpMethod === 'POST') {
+                const requestBody = body ? JSON.parse(body) : {};
+                const { email, password } = requestBody;
+                
+                // Simple authentication for MVP
+                const users = {
+                  'homeowner@test.com': {
+                    id: '1',
+                    email: 'homeowner@test.com',
+                    userType: 'homeowner',
+                    profile: {
+                      firstName: 'John',
+                      lastName: 'Smith',
+                      phone: '+44 7700 900123'
+                    }
+                  },
+                  'builder@test.com': {
+                    id: '2',
+                    email: 'builder@test.com',
+                    userType: 'builder',
+                    profile: {
+                      firstName: 'Mike',
+                      lastName: 'Builder',
+                      phone: '+44 7700 900456'
+                    }
+                  }
+                };
+                
+                const user = users[email];
+                if (user && password === 'password123') {
+                  response = {
+                    token: `mock-jwt-token-${user.id}`,
+                    user: user
+                  };
+                } else {
+                  return {
+                    statusCode: 401,
+                    headers: corsHeaders,
+                    body: JSON.stringify({
+                      success: false,
+                      error: {
+                        code: 'INVALID_CREDENTIALS',
+                        message: 'Invalid email or password'
+                      },
+                      timestamp: new Date().toISOString(),
+                      requestId: requestId
+                    })
+                  };
+                }
+              }
+              // Get current user
+              else if (requestPath === 'api/auth/me' && httpMethod === 'GET') {
+                const authHeader = headers.Authorization || headers.authorization;
+                if (!authHeader || !authHeader.startsWith('Bearer ')) {
+                  return {
+                    statusCode: 401,
+                    headers: corsHeaders,
+                    body: JSON.stringify({
+                      success: false,
+                      error: {
+                        code: 'UNAUTHORIZED',
+                        message: 'No valid token provided'
+                      },
+                      timestamp: new Date().toISOString(),
+                      requestId: requestId
+                    })
+                  };
+                }
+                
+                // Mock user based on token
+                const token = authHeader.split(' ')[1];
+                let user = {
+                  id: '1',
+                  email: 'homeowner@test.com',
+                  userType: 'homeowner',
+                  profile: {
+                    firstName: 'John',
+                    lastName: 'Smith',
+                    phone: '+44 7700 900123'
+                  }
+                };
+                
+                if (token.includes('-2')) {
+                  user = {
+                    id: '2',
+                    email: 'builder@test.com',
+                    userType: 'builder',
+                    profile: {
+                      firstName: 'Mike',
+                      lastName: 'Builder',
+                      phone: '+44 7700 900456'
+                    }
+                  };
+                }
+                
+                response = user;
+              }
+              // Get project types
+              else if (requestPath === 'api/projects/types' && httpMethod === 'GET') {
+                response = {
+                  success: true,
+                  data: [
+                    {
+                      type: 'loft-conversion',
+                      title: 'Loft Conversion',
+                      description: 'Convert your unused loft space into a functional room',
+                      typicalCost: '£15,000 - £60,000',
+                      timeframe: '4-8 weeks',
+                      planningRequired: false,
+                      buildingRegsRequired: true
+                    },
+                    {
+                      type: 'rear-extension',
+                      title: 'Rear Extension',
+                      description: 'Extend your home backwards to create additional living space',
+                      typicalCost: '£15,000 - £50,000',
+                      timeframe: '6-12 weeks',
+                      planningRequired: true,
+                      buildingRegsRequired: true
+                    },
+                    {
+                      type: 'side-extension',
+                      title: 'Side Extension',
+                      description: 'Extend your home to the side for larger rooms',
+                      typicalCost: '£12,000 - £40,000',
+                      timeframe: '6-10 weeks',
+                      planningRequired: true,
+                      buildingRegsRequired: true
+                    },
+                    {
+                      type: 'bathroom-renovation',
+                      title: 'Bathroom Renovation',
+                      description: 'Complete renovation of your bathroom',
+                      typicalCost: '£5,000 - £25,000',
+                      timeframe: '2-4 weeks',
+                      planningRequired: false,
+                      buildingRegsRequired: false
+                    },
+                    {
+                      type: 'kitchen-renovation',
+                      title: 'Kitchen Renovation',
+                      description: 'Transform your kitchen with new units and appliances',
+                      typicalCost: '£8,000 - £35,000',
+                      timeframe: '3-6 weeks',
+                      planningRequired: false,
+                      buildingRegsRequired: false
+                    }
+                  ],
+                  timestamp: new Date().toISOString(),
+                  requestId: requestId
+                };
+              }
+              // Create project
+              else if (requestPath === 'api/projects' && httpMethod === 'POST') {
+                const requestBody = body ? JSON.parse(body) : {};
+                const projectId = uuidv4();
+                const now = new Date().toISOString();
+                const status = 'planning'; // Use frontend-compatible status
+                
+                // Create project with proper DynamoDB structure
+                const project = {
+                  PK: `PROJECT#${projectId}`,
+                  SK: 'METADATA',
+                  id: projectId,
+                  ownerId: '1', // In real app, get from JWT token
+                  propertyAddress: requestBody.propertyAddress || {},
+                  projectType: requestBody.projectType || 'other',
+                  status: status,
+                  requirements: {
+                    description: requestBody.requirements?.description || '',
+                    dimensions: requestBody.requirements?.dimensions || {},
+                    materials: requestBody.requirements?.materials || [],
+                    timeline: requestBody.requirements?.timeline || '',
+                    budget: requestBody.requirements?.budget || {},
+                    specialRequirements: requestBody.requirements?.specialRequirements || []
+                  },
+                  documents: [],
+                  councilData: {
+                    conservationArea: false,
+                    listedBuilding: false,
+                    planningRestrictions: [],
+                    localAuthority: ''
+                  },
+                  createdAt: now,
+                  updatedAt: now,
+                  GSI2PK: status,
+                  GSI2SK: now
+                };
+                
+                try {
+                  // Save to DynamoDB
+                  await dynamodb.send(new PutCommand({
+                    TableName: process.env.DYNAMODB_TABLE,
+                    Item: project,
+                    ConditionExpression: 'attribute_not_exists(PK)'
+                  }));
+                  
+                  // Return project in frontend-compatible format
+                  const responseProject = transformProjectForFrontend(project);
+                  
+                  response = {
+                    success: true,
+                    data: responseProject,
+                    timestamp: new Date().toISOString(),
+                    requestId: requestId
+                  };
+                } catch (dbError) {
+                  console.error('DynamoDB error creating project:', dbError);
+                  return {
+                    statusCode: 500,
+                    headers: corsHeaders,
+                    body: JSON.stringify({
+                      success: false,
+                      error: {
+                        code: 'PROJECT_CREATION_ERROR',
+                        message: 'Failed to create project'
+                      },
+                      timestamp: new Date().toISOString(),
+                      requestId: requestId
+                    })
+                  };
+                }
+              }
+              // Generate SoW
+              else if (requestPath === 'api/sow/generate' && httpMethod === 'POST') {
+                const requestBody = body ? JSON.parse(body) : {};
+                const projectId = requestBody.projectId;
+                
+                if (!projectId) {
+                  return {
+                    statusCode: 400,
+                    headers: corsHeaders,
+                    body: JSON.stringify({
+                      success: false,
+                      error: {
+                        code: 'MISSING_PROJECT_ID',
+                        message: 'Project ID is required'
+                      },
+                      timestamp: new Date().toISOString(),
+                      requestId: requestId
+                    })
+                  };
+                }
+                
+                try {
+                  // Get project from DynamoDB to generate SoW
+                  const result = await dynamodb.send(new GetCommand({
+                    TableName: process.env.DYNAMODB_TABLE,
+                    Key: {
+                      PK: `PROJECT#${projectId}`,
+                      SK: 'METADATA'
+                    }
+                  }));
+                  
+                  if (!result.Item) {
+                    return {
+                      statusCode: 404,
+                      headers: corsHeaders,
+                      body: JSON.stringify({
+                        success: false,
+                        error: {
+                          code: 'PROJECT_NOT_FOUND',
+                          message: 'Project not found'
+                        },
+                        timestamp: new Date().toISOString(),
+                        requestId: requestId
+                      })
+                    };
+                  }
+                  
+                  const project = result.Item;
+                  
+                  // Generate SoW content based on project type
+                  const sowContent = generateSoWContent(project);
+                  
+                  // Create SoW record
+                  const sowId = uuidv4();
+                  const now = new Date().toISOString();
+                  
+                  const sow = {
+                    PK: `SOW#${sowId}`,
+                    SK: 'METADATA',
+                    id: sowId,
+                    projectId: projectId,
+                    content: sowContent,
+                    status: 'draft',
+                    generatedAt: now,
+                    createdAt: now,
+                    updatedAt: now
+                  };
+                  
+                  // Save SoW to DynamoDB
+                  await dynamodb.send(new PutCommand({
+                    TableName: process.env.DYNAMODB_TABLE,
+                    Item: sow
+                  }));
+                  
+                  // Update project with SoW ID
+                  await dynamodb.send(new PutCommand({
+                    TableName: process.env.DYNAMODB_TABLE,
+                    Item: {
+                      ...project,
+                      sowId: sowId,
+                      status: 'in_progress',
+                      updatedAt: now,
+                      GSI2PK: 'in_progress'
+                    }
+                  }));
+                  
+                  // Return SoW without DynamoDB keys
+                  const { PK, SK, ...responseSoW } = sow;
+                  
+                  response = {
+                    success: true,
+                    data: responseSoW,
+                    timestamp: new Date().toISOString(),
+                    requestId: requestId
+                  };
+                  
+                } catch (dbError) {
+                  console.error('DynamoDB error generating SoW:', dbError);
+                  return {
+                    statusCode: 500,
+                    headers: corsHeaders,
+                    body: JSON.stringify({
+                      success: false,
+                      error: {
+                        code: 'SOW_GENERATION_ERROR',
+                        message: 'Failed to generate Scope of Work'
+                      },
+                      timestamp: new Date().toISOString(),
+                      requestId: requestId
+                    })
+                  };
+                }
+              }
+              // Get single project
+              else if (requestPath.startsWith('api/projects/') && httpMethod === 'GET') {
+                const projectId = requestPath.split('/')[2];
+                
+                try {
+                  // Get project from DynamoDB
+                  const result = await dynamodb.send(new GetCommand({
+                    TableName: process.env.DYNAMODB_TABLE,
+                    Key: {
+                      PK: `PROJECT#${projectId}`,
+                      SK: 'METADATA'
+                    }
+                  }));
+                  
+                  if (result.Item) {
+                    const project = transformProjectForFrontend(result.Item);
+                    response = {
+                      success: true,
+                      data: project,
+                      timestamp: new Date().toISOString(),
+                      requestId: requestId
+                    };
+                  } else {
+                    return {
+                      statusCode: 404,
+                      headers: corsHeaders,
+                      body: JSON.stringify({
+                        success: false,
+                        error: {
+                          code: 'PROJECT_NOT_FOUND',
+                          message: 'Project not found'
+                        },
+                        timestamp: new Date().toISOString(),
+                        requestId: requestId
+                      })
+                    };
+                  }
+                } catch (dbError) {
+                  console.error('DynamoDB error getting project:', dbError);
+                  return {
+                    statusCode: 500,
+                    headers: corsHeaders,
+                    body: JSON.stringify({
+                      success: false,
+                      error: {
+                        code: 'PROJECT_RETRIEVAL_ERROR',
+                        message: 'Failed to retrieve project'
+                      },
+                      timestamp: new Date().toISOString(),
+                      requestId: requestId
+                    })
+                  };
+                }
+              }
+              // Default response
+              else {
+                response = {
+                  message: 'Welcome to UK Home Improvement Platform MVP!',
+                  status: 'Running on AWS Lambda',
+                  environment: process.env.NODE_ENV || 'production',
+                  availableEndpoints: [
+                    'GET /api/health',
+                    'GET /api/projects',
+                    'POST /api/projects',
+                    'GET /api/projects/{id}',
+                    'GET /api/projects/types',
+                    'POST /api/auth/login',
+                    'GET /api/auth/me',
+                    'POST /api/sow/generate'
+                  ],
+                  requestInfo: {
+                    method: httpMethod,
+                    path: path,
+                    requestPath: requestPath
+                  },
+                  timestamp: new Date().toISOString(),
+                  requestId: requestId
+                };
+              }
+              
+              return {
+                statusCode: 200,
+                headers: corsHeaders,
+                body: JSON.stringify(response)
+              };
+              
+            } catch (error) {
+              console.error('Lambda error:', error);
+              return {
+                statusCode: 500,
+                headers: corsHeaders,
+                body: JSON.stringify({
+                  success: false,
+                  error: {
+                    code: 'INTERNAL_SERVER_ERROR',
+                    message: 'An unexpected error occurred'
+                  },
+                  timestamp: new Date().toISOString(),
+                  requestId: event.requestContext?.requestId || 'unknown'
+                })
+              };
+            }
+          };
+
+  # Lambda execution role (minimal permissions)
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: DynamoDBAccess
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                  - dynamodb:PutItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
+                  - dynamodb:Query
+                  - dynamodb:Scan
+                Resource: !GetAtt MainTable.Arn
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                Resource: !Sub '${DocumentsBucket.Arn}/*'
+
+  # API Gateway (simple REST API)
+  RestApi:
+    Type: AWS::ApiGateway::RestApi
+    Properties:
+      Name: !Sub '${Environment}-uk-home-api'
+      Description: UK Home Improvement Platform MVP API
+      EndpointConfiguration:
+        Types:
+          - REGIONAL
+
+  # API Gateway Resource (catch-all)
+  ApiResource:
+    Type: AWS::ApiGateway::Resource
+    Properties:
+      RestApiId: !Ref RestApi
+      ParentId: !GetAtt RestApi.RootResourceId
+      PathPart: '{proxy+}'
+
+  # API Gateway Method (catch-all)
+  ApiMethod:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !Ref ApiResource
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SimpleAPIFunction.Arn}/invocations'
+
+  # API Gateway Method for root
+  ApiMethodRoot:
+    Type: AWS::ApiGateway::Method
+    Properties:
+      RestApiId: !Ref RestApi
+      ResourceId: !GetAtt RestApi.RootResourceId
+      HttpMethod: ANY
+      AuthorizationType: NONE
+      Integration:
+        Type: AWS_PROXY
+        IntegrationHttpMethod: POST
+        Uri: !Sub 'arn:aws:apigateway:${AWS::Region}:lambda:path/2015-03-31/functions/${SimpleAPIFunction.Arn}/invocations'
+
+  # API Gateway Deployment
+  ApiDeployment:
+    Type: AWS::ApiGateway::Deployment
+    DependsOn:
+      - ApiMethod
+      - ApiMethodRoot
+    Properties:
+      RestApiId: !Ref RestApi
+      StageName: !Ref Environment
+
+  # Lambda permission for API Gateway
+  LambdaApiGatewayPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref SimpleAPIFunction
+      Action: lambda:InvokeFunction
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub 'arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${RestApi}/*/*/*'
+
+Outputs:
+  ApiUrl:
+    Description: API Gateway URL
+    Value: !Sub 'https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}'
+    Export:
+      Name: !Sub '${Environment}-API-URL'
+
+  HealthCheckUrl:
+    Description: Health Check URL
+    Value: !Sub 'https://${RestApi}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/api/health'
+    Export:
+      Name: !Sub '${Environment}-Health-URL'
+
+  DynamoDBTable:
+    Description: DynamoDB Table Name
+    Value: !Ref MainTable
+    Export:
+      Name: !Sub '${Environment}-DynamoDB-Table'
+
+  S3Bucket:
+    Description: S3 Bucket Name
+    Value: !Ref DocumentsBucket
+    Export:
+      Name: !Sub '${Environment}-S3-Bucket'

@@ -1,0 +1,432 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'UK Home Improvement Platform - CloudWatch Monitoring and Alarms'
+
+Parameters:
+  Environment:
+    Type: String
+    Default: production
+    AllowedValues: [staging, production]
+    Description: Environment name
+
+  AlertEmail:
+    Type: String
+    Description: Email address for alerts
+    Default: alerts@uk-home-improvement.com
+
+Resources:
+  # SNS Topic for Alerts
+  AlertsTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      TopicName: !Sub '${Environment}-uk-home-improvement-alerts'
+      DisplayName: !Sub '${Environment} UK Home Improvement Platform Alerts'
+
+  AlertsTopicSubscription:
+    Type: AWS::SNS::Subscription
+    Properties:
+      TopicArn: !Ref AlertsTopic
+      Protocol: email
+      Endpoint: !Ref AlertEmail
+
+  # CloudWatch Dashboard
+  MainDashboard:
+    Type: AWS::CloudWatch::Dashboard
+    Properties:
+      DashboardName: !Sub '${Environment}-uk-home-improvement-dashboard'
+      DashboardBody: !Sub |
+        {
+          "widgets": [
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 0,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ApplicationELB", "RequestCount", "LoadBalancer", "${ApplicationLoadBalancer}" ],
+                  [ ".", "TargetResponseTime", ".", "." ],
+                  [ ".", "HTTPCode_Target_2XX_Count", ".", "." ],
+                  [ ".", "HTTPCode_Target_4XX_Count", ".", "." ],
+                  [ ".", "HTTPCode_Target_5XX_Count", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Application Load Balancer Metrics",
+                "period": 300
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 6,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/ECS", "CPUUtilization", "ServiceName", "${Environment}-backend-service", "ClusterName", "${ECSCluster}" ],
+                  [ ".", "MemoryUtilization", ".", ".", ".", "." ],
+                  [ ".", "CPUUtilization", "ServiceName", "${Environment}-frontend-service", "ClusterName", "${ECSCluster}" ],
+                  [ ".", "MemoryUtilization", ".", ".", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "ECS Service Metrics",
+                "period": 300
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 12,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/DynamoDB", "ConsumedReadCapacityUnits", "TableName", "${DynamoDBTable}" ],
+                  [ ".", "ConsumedWriteCapacityUnits", ".", "." ],
+                  [ ".", "ThrottledRequests", ".", "." ],
+                  [ ".", "UserErrors", ".", "." ],
+                  [ ".", "SystemErrors", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "DynamoDB Metrics",
+                "period": 300
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 18,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/Lambda", "Duration", "FunctionName", "${Environment}-document-processing" ],
+                  [ ".", "Errors", ".", "." ],
+                  [ ".", "Invocations", ".", "." ],
+                  [ ".", "Duration", "FunctionName", "${Environment}-sow-generation" ],
+                  [ ".", "Errors", ".", "." ],
+                  [ ".", "Invocations", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "Lambda Function Metrics",
+                "period": 300
+              }
+            },
+            {
+              "type": "metric",
+              "x": 0,
+              "y": 24,
+              "width": 12,
+              "height": 6,
+              "properties": {
+                "metrics": [
+                  [ "AWS/Bedrock", "InvocationLatency", "ModelId", "anthropic.claude-3-5-sonnet-20241022-v2:0" ],
+                  [ ".", "InvocationClientErrors", ".", "." ],
+                  [ ".", "InvocationServerErrors", ".", "." ],
+                  [ ".", "InvocationThrottles", ".", "." ]
+                ],
+                "view": "timeSeries",
+                "stacked": false,
+                "region": "${AWS::Region}",
+                "title": "AWS Bedrock Metrics",
+                "period": 300
+              }
+            }
+          ]
+        }
+
+  # Application Load Balancer Alarms
+  ALBHighResponseTimeAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-ALB-High-Response-Time'
+      AlarmDescription: 'ALB response time is too high'
+      MetricName: TargetResponseTime
+      Namespace: AWS/ApplicationELB
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 2.0
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !ImportValue
+            Fn::Sub: '${Environment}-ALB-DNS'
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  ALBHighErrorRateAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-ALB-High-Error-Rate'
+      AlarmDescription: 'ALB error rate is too high'
+      MetricName: HTTPCode_Target_5XX_Count
+      Namespace: AWS/ApplicationELB
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: LoadBalancer
+          Value: !ImportValue
+            Fn::Sub: '${Environment}-ALB-DNS'
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  # ECS Service Alarms
+  ECSBackendHighCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-ECS-Backend-High-CPU'
+      AlarmDescription: 'ECS Backend service CPU utilization is too high'
+      MetricName: CPUUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ServiceName
+          Value: !Sub '${Environment}-backend-service'
+        - Name: ClusterName
+          Value: !ImportValue
+            Fn::Sub: '${Environment}-ECS-Cluster'
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  ECSBackendHighMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-ECS-Backend-High-Memory'
+      AlarmDescription: 'ECS Backend service memory utilization is too high'
+      MetricName: MemoryUtilization
+      Namespace: AWS/ECS
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 85
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ServiceName
+          Value: !Sub '${Environment}-backend-service'
+        - Name: ClusterName
+          Value: !ImportValue
+            Fn::Sub: '${Environment}-ECS-Cluster'
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  # DynamoDB Alarms
+  DynamoDBThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-DynamoDB-Throttles'
+      AlarmDescription: 'DynamoDB requests are being throttled'
+      MetricName: ThrottledRequests
+      Namespace: AWS/DynamoDB
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: TableName
+          Value: !ImportValue
+            Fn::Sub: '${Environment}-DynamoDB-Table'
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  DynamoDBErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-DynamoDB-Errors'
+      AlarmDescription: 'DynamoDB is experiencing errors'
+      MetricName: UserErrors
+      Namespace: AWS/DynamoDB
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: TableName
+          Value: !ImportValue
+            Fn::Sub: '${Environment}-DynamoDB-Table'
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  # Lambda Function Alarms
+  LambdaDocumentProcessingErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-Lambda-DocumentProcessing-Errors'
+      AlarmDescription: 'Document processing Lambda function is experiencing errors'
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 3
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Sub '${Environment}-document-processing'
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  LambdaSoWGenerationErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-Lambda-SoWGeneration-Errors'
+      AlarmDescription: 'SoW generation Lambda function is experiencing errors'
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 2
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Sub '${Environment}-sow-generation'
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  LambdaDocumentProcessingDurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-Lambda-DocumentProcessing-Duration'
+      AlarmDescription: 'Document processing Lambda function duration is too high'
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 240000
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Sub '${Environment}-document-processing'
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  # Bedrock Alarms
+  BedrockHighLatencyAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-Bedrock-High-Latency'
+      AlarmDescription: 'Bedrock invocation latency is too high'
+      MetricName: InvocationLatency
+      Namespace: AWS/Bedrock
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 30000
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: ModelId
+          Value: 'anthropic.claude-3-5-sonnet-20241022-v2:0'
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  BedrockThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-Bedrock-Throttles'
+      AlarmDescription: 'Bedrock requests are being throttled'
+      MetricName: InvocationThrottles
+      Namespace: AWS/Bedrock
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: ModelId
+          Value: 'anthropic.claude-3-5-sonnet-20241022-v2:0'
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  # Custom Metrics for Application Health
+  ApplicationHealthMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Sub '/ecs/${Environment}-backend'
+      FilterPattern: '[timestamp, requestId, level="ERROR", ...]'
+      MetricTransformations:
+        - MetricNamespace: !Sub '${Environment}/Application'
+          MetricName: ErrorCount
+          MetricValue: '1'
+          DefaultValue: 0
+
+  ApplicationHealthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub '${Environment}-Application-Health'
+      AlarmDescription: 'Application is experiencing high error rates'
+      MetricName: ErrorCount
+      Namespace: !Sub '${Environment}/Application'
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 10
+      ComparisonOperator: GreaterThanThreshold
+      AlarmActions:
+        - !Ref AlertsTopic
+
+  # Cost Monitoring Alarm
+  CostBudget:
+    Type: AWS::Budgets::Budget
+    Properties:
+      Budget:
+        BudgetName: !Sub '${Environment}-uk-home-improvement-budget'
+        BudgetLimit:
+          Amount: !If [IsProduction, 1000, 200]
+          Unit: USD
+        TimeUnit: MONTHLY
+        BudgetType: COST
+        CostFilters:
+          TagKey:
+            - Environment
+          TagValue:
+            - !Ref Environment
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 80
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+        - Notification:
+            NotificationType: FORECASTED
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+          Subscribers:
+            - SubscriptionType: EMAIL
+              Address: !Ref AlertEmail
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, production]
+
+Outputs:
+  AlertsTopicArn:
+    Description: SNS Topic ARN for Alerts
+    Value: !Ref AlertsTopic
+    Export:
+      Name: !Sub '${Environment}-Alerts-Topic-Arn'
+
+  DashboardURL:
+    Description: CloudWatch Dashboard URL
+    Value: !Sub 'https://${AWS::Region}.console.aws.amazon.com/cloudwatch/home?region=${AWS::Region}#dashboards:name=${Environment}-uk-home-improvement-dashboard'
+    Export:
+      Name: !Sub '${Environment}-Dashboard-URL'

@@ -1,0 +1,47 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo Logging in to Amazon ECR...
+      - aws ecr get-login-password --region $AWS_DEFAULT_REGION | docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com
+      - REPOSITORY_URI=$AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com/$IMAGE_REPO_NAME
+      - COMMIT_HASH=$(echo $CODEBUILD_RESOLVED_SOURCE_VERSION | cut -c 1-7)
+      - IMAGE_TAG=${COMMIT_HASH:=latest}
+      - echo Build started on `date`
+      - echo Building the Docker images...
+
+  build:
+    commands:
+      # Build backend image
+      - echo Building backend Docker image...
+      - docker build -t $REPOSITORY_URI:backend-latest -f Dockerfile .
+      - docker tag $REPOSITORY_URI:backend-latest $REPOSITORY_URI:backend-$IMAGE_TAG
+      
+      # Build frontend image
+      - echo Building frontend Docker image...
+      - docker build -t $REPOSITORY_URI:frontend-latest -f frontend/Dockerfile ./frontend
+      - docker tag $REPOSITORY_URI:frontend-latest $REPOSITORY_URI:frontend-$IMAGE_TAG
+
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker images...
+      
+      # Push backend images
+      - docker push $REPOSITORY_URI:backend-latest
+      - docker push $REPOSITORY_URI:backend-$IMAGE_TAG
+      
+      # Push frontend images
+      - docker push $REPOSITORY_URI:frontend-latest
+      - docker push $REPOSITORY_URI:frontend-$IMAGE_TAG
+      
+      # Create image definitions file for ECS deployment
+      - printf '[{"name":"backend","imageUri":"%s"},{"name":"frontend","imageUri":"%s"}]' $REPOSITORY_URI:backend-$IMAGE_TAG $REPOSITORY_URI:frontend-$IMAGE_TAG > imagedefinitions.json
+      - cat imagedefinitions.json
+
+artifacts:
+  files:
+    - imagedefinitions.json
+    - aws/cloudformation/**/*
+  name: BuildArtifact
