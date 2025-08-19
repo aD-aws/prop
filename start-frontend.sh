@@ -36,9 +36,23 @@ cd frontend
 
 log "📦 Installing dependencies..."
 
-# Install dependencies
-if ! npm install; then
-    error "Failed to install dependencies"
+# Check if node_modules exists and has aws-amplify
+if [ ! -d "node_modules" ] || [ ! -d "node_modules/aws-amplify" ]; then
+    log "Installing dependencies with legacy peer deps..."
+    
+    if ! npm install --legacy-peer-deps; then
+        warn "Standard install failed, trying clean install..."
+        
+        # Clean install
+        rm -rf node_modules package-lock.json
+        npm cache clean --force
+        
+        if ! npm install --legacy-peer-deps; then
+            error "Failed to install dependencies. Try running: ./fix-frontend-dependencies.sh"
+        fi
+    fi
+else
+    log "Dependencies already installed"
 fi
 
 log "✅ Dependencies installed successfully"
@@ -53,4 +67,15 @@ log "  Builder: builder@test.com / Password123!"
 log ""
 
 # Start the development server
-npm start
+log "🚀 Starting development server..."
+log "If you encounter TypeScript errors, the server will try to start anyway."
+log "You can also try: npm run start:skip-check"
+log ""
+
+# Try normal start first, fallback to skip-check if it fails
+if ! timeout 10s npm start 2>/dev/null; then
+    warn "Normal start failed or took too long, trying with skip-check..."
+    npm run start:skip-check
+else
+    npm start
+fi

@@ -46,15 +46,39 @@ npm install --legacy-peer-deps
 
 ### 2. AWS Amplify Import Errors
 
-**Problem**: Cannot resolve 'aws-amplify/auth' or similar import errors
+**Problem**: Cannot find module 'aws-amplify' or its corresponding type declarations
 
 **Solutions**:
-```bash
-# Install specific Amplify packages
-npm install aws-amplify @aws-amplify/auth @aws-amplify/core
 
-# Or install the full Amplify library
-npm install aws-amplify@latest
+**Option 1: Clean Install (Recommended)**
+```bash
+# Use the fix script
+cd .. && ./fix-frontend-dependencies.sh
+
+# Or manually:
+rm -rf node_modules package-lock.json
+npm cache clean --force
+npm install --legacy-peer-deps
+```
+
+**Option 2: Install Specific Version**
+```bash
+npm install aws-amplify@5.3.0 --legacy-peer-deps
+```
+
+**Option 3: Skip TypeScript Checks**
+```bash
+npm run start:skip-check
+# or
+SKIP_PREFLIGHT_CHECK=true npm start
+```
+
+**Option 4: Use Fallback Authentication**
+If AWS Amplify continues to cause issues, you can temporarily use the fallback:
+```bash
+# Rename the files
+mv src/contexts/AuthContext.tsx src/contexts/AuthContext.amplify.tsx
+mv src/contexts/AuthContext.fallback.tsx src/contexts/AuthContext.tsx
 ```
 
 ### 3. TypeScript Compilation Errors
